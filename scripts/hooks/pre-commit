@@ -1,0 +1,98 @@
+#!/bin/bash
+# Pre-commit hook to scan for secrets before committing
+# This helps prevent accidental credential exposure
+#
+# Install: ./scripts/install-hooks.sh
+# Allowlists: .secret-scan-allowlist, .secret-scan-longstr-allowlist
+#
+# The allowlist files contain regex patterns (one per line) for known false
+# positives. Lines starting with # are comments. Blank lines are ignored.
+
+set -e
+
+echo "🔐 Scanning for secrets..."
+
+# Repo root (works even if committing from a subdirectory)
+REPO_ROOT=$(git rev-parse --show-toplevel)
+ALLOWLIST="$REPO_ROOT/.secret-scan-allowlist"
+LONGSTR_ALLOWLIST="$REPO_ROOT/.secret-scan-longstr-allowlist"
+
+# Files being committed
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$STAGED_FILES" ]; then
+    exit 0
+fi
+
+# Patterns to detect
+SECRET_PATTERNS='(client_secret|CLIENT_SECRET|password|PASSWORD|api[_-]?key|API[_-]?KEY|secret_key|SECRET_KEY|private_key|PRIVATE_KEY)'
+
+# Build allowlist filter command
+# Strips comments and blank lines, then uses grep -vEf to exclude matches
+filter_allowlist() {
+    local allowfile="$1"
+    if [ -f "$allowfile" ]; then
+        grep -vEf <(grep -v '^#' "$allowfile" | grep -v '^$') 2>/dev/null || true
+    else
+        cat  # pass through if no allowlist
+    fi
+}
+
+FOUND_SECRETS=0
+
+# Files to exclude from scanning (the allowlists themselves contain keyword patterns)
+EXCLUDE_FILES=".secret-scan-allowlist|.secret-scan-longstr-allowlist"
+
+# Check staged content for secret keywords (excluding allowlisted patterns and excluded files)
+KEYWORD_HITS=$(git diff --cached -- . ":(exclude).secret-scan-allowlist" ":(exclude).secret-scan-longstr-allowlist" | grep -iE "$SECRET_PATTERNS" | grep -v "^-" | grep -v "SECRET_PATTERNS" | filter_allowlist "$ALLOWLIST" || true)
+if [ -n "$KEYWORD_HITS" ]; then
+    echo "⚠️  WARNING: Potential secret keywords found in staged changes!"
+    echo ""
+    echo "$KEYWORD_HITS" | head -10
+    echo ""
+    FOUND_SECRETS=1
+fi
+
+# Check for .claude/settings.json specifically
+if echo "$STAGED_FILES" | grep -q ".claude/settings.json"; then
+    echo "⚠️  WARNING: .claude/settings.json is staged for commit!"
+    echo "   This file may contain command patterns with embedded secrets."
+    echo "   Please verify it does not contain credentials."
+    echo ""
+    FOUND_SECRETS=1
+fi
+
+# Check for .env files (hard block - never allow)
+if echo "$STAGED_FILES" | grep -qE "\.env($|\.)" ; then
+    echo "❌ ERROR: .env file is staged for commit!"
+    echo "   Environment files should NEVER be committed."
+    exit 1
+fi
+
+# Check for long strings that look like credentials (excluding allowlisted patterns and excluded files)
+LONG_STRINGS=$(git diff --cached -- . ":(exclude).secret-scan-allowlist" ":(exclude).secret-scan-longstr-allowlist" | grep -oE '[a-zA-Z0-9+/~]{35,}' | grep -v "^-" | filter_allowlist "$LONGSTR_ALLOWLIST" || true)
+if [ -n "$LONG_STRINGS" ]; then
+    echo "⚠️  WARNING: Long strings detected (possible credentials):"
+    echo "$LONG_STRINGS" | head -5
+    echo ""
+    FOUND_SECRETS=1
+fi
+
+if [ $FOUND_SECRETS -eq 1 ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🛑 REVIEW REQUIRED: Potential secrets detected above."
+    echo ""
+    echo "   To proceed anyway (if these are false positives):"
+    echo "   git commit --no-verify"
+    echo ""
+    echo "   To add false positives to allowlist:"
+    echo "   Edit .secret-scan-allowlist or .secret-scan-longstr-allowlist"
+    echo ""
+    echo "   To abort and fix:"
+    echo "   git reset HEAD <file>"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exit 1
+fi
+
+echo "✅ No obvious secrets detected."
+exit 0
