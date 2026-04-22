@@ -64,3 +64,31 @@ hardcoded tokens, API keys with real-looking values):
 `.claude/skills/pr-prep-secret-guard/SKILL.md` documents the scan manually for
 git operations not covered by the hook (e.g., pushing, PR prep). Invoke before
 pushing or creating a PR.
+
+## Cross-repo sync
+
+Some files in this repo are seeded from the sibling monorepo
+`~/Repo/github-klemensms/mcp-consultant-tools/` and must stay in sync. When
+you edit one, edit the other (or record a deliberate divergence below).
+
+**Files that must stay in sync across repos:**
+- `.claude/agents/mcp-local-tester.md`
+- `.claude/templates/mcp-test-runner.mjs`
+- `scripts/install-hooks.sh`
+- `scripts/hooks/pre-commit`
+- `.secret-scan-allowlist` — allowlist patterns may differ per repo (different code surface), but the file itself + header conventions stay aligned
+- `.secret-scan-longstr-allowlist` — same
+
+**Deliberate divergences (this repo only):**
+- `mcp-local-tester.md` + `mcp-test-runner.mjs` carry a sync-header comment at
+  the top noting this repo is single-package (use `MCP_TEST_PACKAGE=./build/index.js`
+  directly, skip monorepo "which package?" discovery) and that AX + Screen
+  Recording permissions are a precondition for action tools. The body of both
+  files is byte-identical to the sibling repo's versions; only the header
+  comment is added.
+- `.secret-scan-allowlist` adds patterns specific to this repo's test fixtures
+  (`safety-service.test.ts` intentionally feeds fake-secret strings through
+  the runtime scanner — they must be allowlisted at the static-scan level so
+  the pre-commit hook doesn't trip on them).
+- `.secret-scan-longstr-allowlist` adds Apple framework identifiers
+  (`ScreenCaptureKit`, `kAXFocusedWindowAttribute`, etc.) that exceed 35 chars.
