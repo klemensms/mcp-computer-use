@@ -430,13 +430,10 @@ final class Bridge {
 		let windowId = UInt32(try intArg(request, "windowId"))
 		let x = try doubleArg(request, "x")
 		let y = try doubleArg(request, "y")
-		guard let targetPid = optionalIntArg(request, "pid").map({ Int32($0) }) else {
-			throw BridgeFailure(message: "mouseClick requires pid in non-intrusive mode", code: "pid_required")
-		}
 		let captureWidth = max(1.0, (try? doubleArg(request, "captureWidth")) ?? 1.0)
 		let captureHeight = max(1.0, (try? doubleArg(request, "captureHeight")) ?? 1.0)
 		let point = try mapWindowPoint(windowId: windowId, x: x, y: y, captureWidth: captureWidth, captureHeight: captureHeight)
-		try postMouseClick(at: point, pid: targetPid)
+		try postMouseClick(at: point)
 		return ["clicked": true]
 	}
 
@@ -988,9 +985,7 @@ final class Bridge {
 
 	private func typeText(_ request: [String: Any]) throws -> [String: Any] {
 		let text = try stringArg(request, "text")
-		guard let targetPid = optionalIntArg(request, "pid").map({ Int32($0) }) else {
-			throw BridgeFailure(message: "typeText requires pid in non-intrusive mode", code: "pid_required")
-		}
+		let targetPid = optionalIntArg(request, "pid").map { Int32($0) }
 		try postUnicodeText(text, pid: targetPid)
 		return ["typed": true]
 	}
@@ -1491,19 +1486,24 @@ final class Bridge {
 		return CGPoint(x: screenX, y: screenY)
 	}
 
-	private func postEvent(_ event: CGEvent, pid: Int32) {
-		event.postToPid(pid)
-	}
-
-	private func postMouseMove(to point: CGPoint, pid: Int32) throws {
-		guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
-			throw BridgeFailure(message: "Failed to create mouse move event", code: "input_failed")
+	private func postEvent(_ event: CGEvent, pid: Int32?) {
+		if let pid = pid {
+			event.postToPid(pid)
+		} else {
+			event.post(tap: .cghidEventTap)
 		}
-		postEvent(move, pid: pid)
 	}
 
-	private func postMouseClick(at point: CGPoint, pid: Int32) throws {
-		try postMouseMove(to: point, pid: pid)
+	private func postMouseMove(to point: CGPoint) throws {
+		// We warp the cursor rather than posting a move event; combined with a .cghidEventTap
+		// click this is the reliable path for modern AppKit apps (postToPid mouse events
+		// are silently ignored).
+		CGWarpMouseCursorPosition(point)
+	}
+
+	private func postMouseClick(at point: CGPoint) throws {
+		try postMouseMove(to: point)
+		usleep(5_000) // let the cursor settle so hit-test resolves the right view
 		guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
 			let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
 		else {
@@ -1511,12 +1511,12 @@ final class Bridge {
 		}
 		down.setIntegerValueField(.mouseEventClickState, value: 1)
 		up.setIntegerValueField(.mouseEventClickState, value: 1)
-		postEvent(down, pid: pid)
+		down.post(tap: .cghidEventTap)
 		usleep(12_000)
-		postEvent(up, pid: pid)
+		up.post(tap: .cghidEventTap)
 	}
 
-	private func postUnicodeText(_ text: String, pid: Int32) throws {
+	private func postUnicodeText(_ text: String, pid: Int32?) throws {
 		for scalar in text.unicodeScalars {
 			let char = String(scalar)
 			guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
