@@ -1,0 +1,22 @@
+mcp-computer-use
+================
+
+This product includes portions of injaneity/pi-computer-use
+(https://github.com/injaneity/pi-computer-use), licensed under the MIT license.
+Derived from commit 96434a7 (v0.1.1).
+
+Specifically, the Swift helper at native/macos/bridge.swift is copied from
+that project. The JSON-over-stdio IPC protocol between the Node bridge and
+the Swift helper preserves wire compatibility with the upstream.
+
+The Node-side TypeScript (src/native/macos-bridge.ts) takes inspiration
+from the upstream src/bridge.ts but is a clean re-implementation tailored
+to the MCP server lifecycle and safety model of this project.
+
+Upstream:
+  Copyright (c) 2026 Zane Chee
+  Licensed MIT.
+
+This project:
+  Copyright (c) 2026 Klemens Stelk
+  Licensed MIT.
