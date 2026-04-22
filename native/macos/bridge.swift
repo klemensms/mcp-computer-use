@@ -1,6 +1,7 @@
 // mcp-computer-use — macOS native helper
-// Copied from injaneity/pi-computer-use @ 96434a7 (MIT © Zane Chee).
-// Modified: attribution header only. See /NOTICE for full licensing.
+// Seeded from injaneity/pi-computer-use @ 96434a7 (MIT © Zane Chee).
+// Extended and owned here — no upstream wire-compat commitment.
+// See /NOTICE for full licensing.
 //
 import Foundation
 import AppKit
@@ -168,7 +169,7 @@ final class Bridge {
 		case "listApps":
 			return listApps()
 		case "listWindows":
-			return try listWindows(pid: Int32(try intArg(request, "pid")))
+			return try listWindowsSmart(request)
 		case "getFrontmost":
 			return try getFrontmost()
 		case "getUserContext":
@@ -199,6 +200,12 @@ final class Bridge {
 			return try typeText(request)
 		case "getMousePosition":
 			return getMousePosition()
+		case "keyPress":
+			return try keyPress(request)
+		case "scroll":
+			return try scroll(request)
+		case "shutdown":
+			return shutdown()
 		default:
 			throw BridgeFailure(message: "Unknown command '\(cmd)'", code: "unknown_command")
 		}
@@ -991,6 +998,168 @@ final class Bridge {
 	private func getMousePosition() -> [String: Any] {
 		let position = NSEvent.mouseLocation
 		return ["x": position.x, "y": position.y]
+	}
+
+	// MARK: - Extensions (mcp-computer-use)
+
+	/// Virtual keycode map for named keys. Only covers what we expose as v1 named keys.
+	/// Single a-z/0-9 chars are handled below via ASCII→keycode lookup.
+	private static let namedKeyCodes: [String: Int] = [
+		"return": 36, "enter": 36,
+		"escape": 53, "esc": 53,
+		"tab": 48,
+		"space": 49,
+		"delete": 51, "backspace": 51,
+		"forwarddelete": 117, "fwddelete": 117,
+		"up": 126, "down": 125, "left": 123, "right": 124,
+		"pageup": 116, "pagedown": 121,
+		"home": 115, "end": 119,
+		"f1": 122, "f2": 120, "f3": 99, "f4": 118,
+		"f5": 96, "f6": 97, "f7": 98, "f8": 100,
+		"f9": 101, "f10": 109, "f11": 103, "f12": 111,
+	]
+
+	/// ASCII letters + digits → virtual keycode on a standard US keyboard.
+	/// Used only when the named-key table doesn't resolve.
+	private static let charKeyCodes: [Character: Int] = [
+		"a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
+		"i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35,
+		"q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7,
+		"y": 16, "z": 6,
+		"0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22,
+		"7": 26, "8": 28, "9": 25,
+		"-": 27, "=": 24, "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39,
+		",": 43, ".": 47, "/": 44, "`": 50,
+	]
+
+	private func resolveKeycode(_ key: String) throws -> Int {
+		let normalized = key.lowercased()
+		if let kc = Bridge.namedKeyCodes[normalized] { return kc }
+		if let first = normalized.first, normalized.count == 1,
+		   let kc = Bridge.charKeyCodes[first] { return kc }
+		throw BridgeFailure(
+			message: "Unknown key '\(key)'. Try a named key (return, escape, tab, up, down, left, right, f1…f12) or a single character a-z / 0-9.",
+			code: "unknown_key"
+		)
+	}
+
+	private func resolveModifierFlags(_ modifiers: [String]) -> CGEventFlags {
+		var flags: CGEventFlags = []
+		for m in modifiers {
+			switch m.lowercased() {
+			case "cmd", "command": flags.insert(.maskCommand)
+			case "opt", "option", "alt": flags.insert(.maskAlternate)
+			case "ctrl", "control": flags.insert(.maskControl)
+			case "shift": flags.insert(.maskShift)
+			case "fn", "function": flags.insert(.maskSecondaryFn)
+			default: break
+			}
+		}
+		return flags
+	}
+
+	private func keyPress(_ request: [String: Any]) throws -> [String: Any] {
+		let key = try stringArg(request, "key")
+		let mods = (request["modifiers"] as? [String]) ?? []
+		let keycode = try resolveKeycode(key)
+		let flags = resolveModifierFlags(mods)
+		let pid = optionalIntArg(request, "pid").map { Int32($0) }
+
+		guard let source = CGEventSource(stateID: .combinedSessionState) else {
+			throw BridgeFailure(message: "Failed to create CGEventSource", code: "cg_event_source_failed")
+		}
+		guard
+			let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keycode), keyDown: true),
+			let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keycode), keyDown: false)
+		else {
+			throw BridgeFailure(message: "Failed to create key event", code: "cg_key_event_failed")
+		}
+		if !flags.isEmpty {
+			keyDown.flags = flags
+			keyUp.flags = flags
+		}
+
+		if let pid = pid {
+			keyDown.postToPid(pid)
+			keyUp.postToPid(pid)
+		} else {
+			keyDown.post(tap: .cghidEventTap)
+			keyUp.post(tap: .cghidEventTap)
+		}
+		return ["ok": true, "key": key, "keycode": keycode, "modifiers": mods]
+	}
+
+	private func scroll(_ request: [String: Any]) throws -> [String: Any] {
+		let direction = try stringArg(request, "direction").lowercased()
+		let amount = try intArg(request, "amount")
+		let pid = optionalIntArg(request, "pid").map { Int32($0) }
+
+		// .line units — integer ticks. macOS convention: positive wheel1 = up, positive wheel2 = left.
+		var yDelta: Int32 = 0
+		var xDelta: Int32 = 0
+		switch direction {
+		case "up":    yDelta =  Int32(amount)
+		case "down":  yDelta = -Int32(amount)
+		case "left":  xDelta =  Int32(amount)
+		case "right": xDelta = -Int32(amount)
+		default:
+			throw BridgeFailure(message: "Unknown scroll direction '\(direction)'; expected up/down/left/right", code: "bad_direction")
+		}
+
+		guard let source = CGEventSource(stateID: .combinedSessionState) else {
+			throw BridgeFailure(message: "Failed to create CGEventSource", code: "cg_event_source_failed")
+		}
+		let event = CGEvent(
+			scrollWheelEvent2Source: source,
+			units: .line,
+			wheelCount: 2,
+			wheel1: yDelta,
+			wheel2: xDelta,
+			wheel3: 0
+		)
+		guard let ev = event else {
+			throw BridgeFailure(message: "Failed to create scroll event", code: "cg_scroll_event_failed")
+		}
+		if let pid = pid {
+			ev.postToPid(pid)
+		} else {
+			ev.post(tap: .cghidEventTap)
+		}
+		return ["ok": true, "direction": direction, "amount": amount]
+	}
+
+	private func shutdown() -> [String: Any] {
+		// Exit on next run-loop tick so the reply can flush.
+		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25)) {
+			exit(0)
+		}
+		return ["ok": true]
+	}
+
+	/// Extended listWindows: accepts either an explicit `pid` (existing behavior) or an optional
+	/// `bundleId` that we resolve via running apps.
+	private func listWindowsSmart(_ request: [String: Any]) throws -> [[String: Any]] {
+		if let pid = optionalIntArg(request, "pid").map({ Int32($0) }) {
+			return try listWindows(pid: pid)
+		}
+		if let bundleId = request["bundleId"] as? String, !bundleId.isEmpty {
+			let matching = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundleId }
+			var all: [[String: Any]] = []
+			for app in matching {
+				if let wins = try? listWindows(pid: app.processIdentifier) {
+					all.append(contentsOf: wins)
+				}
+			}
+			return all
+		}
+		// Neither pid nor bundleId — return windows for all running apps. Keep it bounded (onscreen only).
+		var all: [[String: Any]] = []
+		for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+			if let wins = try? listWindows(pid: app.processIdentifier) {
+				all.append(contentsOf: wins)
+			}
+		}
+		return all
 	}
 
 	private func copyAttribute(_ element: AXUIElement, attribute: CFString) -> AnyObject? {
