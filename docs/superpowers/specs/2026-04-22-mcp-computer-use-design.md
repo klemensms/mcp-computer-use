@@ -14,7 +14,7 @@ A standalone MCP server that lets LLM agents running in Claude Code (or any MCP 
 
 The Node/TypeScript server shell, tool surface, safety knobs, audit log, allowlist — all shared across platforms. Only the native "bridge" binary differs. v1 ships macOS; Windows slots in as a second `NativeBridge` implementation in v2 without touching the MCP layer.
 
-Forked from `injaneity/pi-computer-use` (MIT) because that project is a Pi extension — not usable from Claude Code — but its Swift helper and IPC protocol are clean, small, and auditable. Copy-with-attribution: take what we need, preserve licensing, track upstream commit hash.
+Forked from `injaneity/pi-computer-use` (MIT) because that project is a Pi extension — not usable from Claude Code — but its Swift helper is a clean starting point. **Derived-from and extended-by:** we seeded `native/macos/bridge.swift` from upstream, but this project owns the file going forward. We add commands (`keyPress`, `scroll`, `shutdown`, richer listWindows, …) as agent needs evolve and we do NOT commit to wire compatibility with the upstream.
 
 ## 2. Goals / Non-goals
 
@@ -226,7 +226,7 @@ Regexes reject on match, returning structured error `{ code: "SECRET_DETECTED", 
 
 ## 6. IPC protocol (Node ↔ Swift helper)
 
-Unchanged from upstream. Node spawns the helper binary, sends newline-delimited JSON requests on stdin, receives newline-delimited JSON responses on stdout. One request at a time (serialized by Node side).
+Seeded from upstream, owned and extended here. Node spawns the helper binary, sends newline-delimited JSON requests on stdin, receives newline-delimited JSON responses on stdout. One request at a time (serialized by Node side). **Command names are camelCase (matches the Swift helper as authored).** Extensions (`keyPress`, `scroll`, `shutdown`, …) are introduced as needed.
 
 Request shape (simplified):
 ```json
@@ -311,30 +311,16 @@ Output: summary to stdout; full JSON cached to `.context/.mcp-cu-cache/`.
 ## 8. Attribution + licensing
 
 - `LICENSE`: MIT with both copyright holders:
-  - `Copyright (c) 2026 Zane Chee` (upstream)
-  - `Copyright (c) 2026 Klemens Stelk` (this fork)
-- `NOTICE`:
-  ```
-  This product includes portions of injaneity/pi-computer-use
-  (https://github.com/injaneity/pi-computer-use), licensed under the MIT license.
-  Derived from commit 96434a7 (v0.1.1).
+  - `Copyright (c) 2026 Zane Chee` (upstream, original author of the Swift seed)
+  - `Copyright (c) 2026 Klemens Stelk` (this project)
+- `NOTICE`: credits the upstream as the seed, makes clear this project extends and owns the file now, and does not promise wire compatibility.
+- README "Acknowledgements" section: one paragraph explaining what was seeded and why.
+- Keep upstream license headers in the seeded file for continuity.
 
-  The Swift helper at native/macos/bridge.swift is copied from that project
-  with modifications. The IPC protocol between the Node bridge and Swift
-  helper preserves wire compatibility with the upstream.
-  ```
-- README "Acknowledgements" section: one paragraph explaining what was forked and why.
-- Keep upstream license headers in files copied verbatim (e.g., top of `bridge.swift`).
+## 9. Upstream relationship
 
-## 9. Upstream tracking
-
-- `docs/UPSTREAM_SYNC.md` documents the current tracked upstream commit and how to diff against it:
-  ```bash
-  cd ~/Repo/3rd\ party\ repos/pi-computer-use
-  git diff 96434a7..HEAD -- native/macos/bridge.swift
-  ```
-- Review upstream changes manually every ~2 months or when upstream announces a release.
-- No auto-sync. Swift helper is small enough for manual merge.
+- **No auto-sync, no wire-compat commitment.** The file started as a copy of upstream commit `96434a7` and is extended here as agent needs evolve.
+- We may pull individual fixes from upstream ad hoc, but the protocol, command surface, and response shapes are owned here going forward.
 
 ## 10. Windows v2 sketch (informational)
 
@@ -377,5 +363,6 @@ None blocking. These are surface-level:
 - 2026-04-22: Tool-registration filter for READONLY (write tools never exposed).
 - 2026-04-22: npm scope `@mcp-consultant-tools/computer-use`.
 - 2026-04-22: Public GitHub repo.
-- 2026-04-22: Copy-with-attribution for Swift helper (not fork-with-history).
+- 2026-04-22: ~~Copy-with-attribution for Swift helper (not fork-with-history).~~ **Superseded** — see 2026-04-22b.
 - 2026-04-22: No prebuilt binaries — compile from source on install.
+- **2026-04-22b: Swift helper is derived-from-and-owned-here, NOT wire-compatible-with-upstream.** During implementation we discovered the upstream helper does not implement `keyPress` or `scroll` (critical v1 tools). The original "copy-with-attribution, preserve wire compat" call traded extensibility for cheap upstream diffs — the wrong trade for a greenfield MCP server whose entire purpose is full computer control. The file is now OUR code: we extend it as needed (keyPress, scroll, shutdown, richer listWindows) and drop the auto-sync commitment. Attribution to Zane Chee remains; divergence is expected.

@@ -389,7 +389,7 @@ Open the file and add these lines at the very top (before any existing `import` 
 //
 ```
 
-Do not alter any other content. Wire compatibility with the upstream IPC protocol depends on this file being unmodified.
+During this Task the file is copied verbatim + attribution header only. **Subsequent tasks WILL extend this file** (add `keyPress`, `scroll`, `shutdown` handlers, etc.) — see spec §8 revision 2026-04-22b. Upstream wire compatibility is not a goal.
 
 - [ ] **Step 3: Verify file length is unchanged except for header**
 
@@ -1439,7 +1439,7 @@ export class MacosBridge implements NativeBridge {
 }
 ```
 
-> **Note on Swift-side cmd names.** The upstream Swift helper uses the same command names (`screenshot`, `click`, `type_text`, `key_press`, `scroll`, `list_windows`, `get_frontmost_window`, `check_permissions`, `shutdown`). Grep `native/macos/bridge.swift` for `case "<cmd>"` to confirm each command we send is supported. If any name differs, rename in this bridge; **never modify `bridge.swift`** — that breaks wire compatibility.
+> **Swift-side cmd names (revised during implementation — see spec §8 revision 2026-04-22b).** The Swift helper uses camelCase names — `checkPermissions`, `listWindows`, `getFrontmost`, `screenshot`, `mouseClick`, `typeText` — plus extensions we add in this project (`keyPress`, `scroll`, `shutdown`). The TS bridge sends camelCase to match. `bridge.swift` is owned here, not wire-compat-locked to upstream — extend it freely.
 
 - [ ] **Step 5: Run tests — expect all pass**
 
