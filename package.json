@@ -1,6 +1,6 @@
 {
   "name": "@mcp-consultant-tools/computer-use",
-  "version": "0.1.0-beta.1",
+  "version": "0.2.0-beta.1",
   "description": "MCP server giving agents semantic macOS app control via the Accessibility API and ScreenCaptureKit.",
   "type": "module",
   "main": "build/index.js",
@@ -10,7 +10,9 @@
   },
   "files": [
     "build",
-    "native/macos/bridge.swift",
+    "native/macos/Package.swift",
+    "native/macos/Package.resolved",
+    "native/macos/Sources",
     "scripts/build-native.mjs",
     "scripts/setup-helper.mjs",
     "README.md",

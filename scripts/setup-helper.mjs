@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helperDest = path.join(os.homedir(), ".mcp-computer-use", "bridge");
-const sourcePath = path.join(rootDir, "native", "macos", "bridge.swift");
+const packageDir = path.join(rootDir, "native", "macos");
+const manifestPath = path.join(packageDir, "Package.swift");
 
 const args = new Set(process.argv.slice(2));
 const isPostinstall = args.has("--postinstall");
@@ -31,19 +32,20 @@ async function run(cmd, cmdArgs) {
   });
 }
 
+function archDir() {
+  return process.arch === "arm64"
+    ? "arm64-apple-macosx"
+    : "x86_64-apple-macosx";
+}
+
 async function build() {
-  if (!(await exists(sourcePath))) {
-    throw new Error(`Swift source missing: ${sourcePath}`);
+  if (!(await exists(manifestPath))) {
+    throw new Error(`SwiftPM manifest missing: ${manifestPath}`);
   }
   await fs.mkdir(path.dirname(helperDest), { recursive: true });
-  await run("xcrun", [
-    "swiftc", "-O",
-    "-framework", "ApplicationServices",
-    "-framework", "AppKit",
-    "-framework", "ScreenCaptureKit",
-    "-framework", "Foundation",
-    sourcePath, "-o", helperDest,
-  ]);
+  await run("swift", ["build", "-c", "release", "--package-path", packageDir]);
+  const builtBinary = path.join(packageDir, ".build", archDir(), "release", "McpComputerUseHelper");
+  await fs.copyFile(builtBinary, helperDest);
   await fs.chmod(helperDest, 0o755);
 }
 
@@ -58,20 +60,23 @@ async function setup() {
     return;
   }
 
-  console.error("[mcp-computer-use] building native helper from source...");
+  console.error("[mcp-computer-use] building native helper via SwiftPM...");
   await build();
   console.error(`[mcp-computer-use] helper ready at ${helperDest}`);
   console.error(
     "[mcp-computer-use] On first run, macOS will ask you to grant Accessibility AND Screen Recording to the helper binary. Required. Revoke in System Settings → Privacy & Security when not in use."
+  );
+  console.error(
+    "[mcp-computer-use] After upgrading from a previous version, permissions may re-prompt once because the binary identity has changed."
   );
 }
 
 setup().catch((err) => {
   const msg = err instanceof Error ? err.message : String(err);
   if (isPostinstall) {
-    // Don't fail npm install on build errors (missing Xcode CLT etc.) — defer to first run.
+    // Don't fail npm install on build errors (missing Xcode etc.) — defer to first run.
     console.error(`[mcp-computer-use] postinstall helper setup skipped: ${msg}`);
-    console.error("[mcp-computer-use] Run: npm run build:native — after installing Xcode CLT (xcode-select --install).");
+    console.error("[mcp-computer-use] Run: npm run build:native — full Xcode required for `swift build`.");
     process.exit(0);
   }
   console.error(msg);
