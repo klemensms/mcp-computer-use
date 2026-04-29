@@ -1,6 +1,6 @@
 # v0.2.0 Migration: replace `bridge.swift` with SwiftPM-consumed `BackgroundComputerUseKit`
 
-**Status:** approved 2026-04-29. Phase 0 complete; Phase 1 not yet started.
+**Status:** approved 2026-04-29. Phases 0 + 1 complete; Phase 2 not yet started. Phase 1 work is uncommitted on the feature branch — awaiting review before commit.
 
 **Branch:** `feat/swap-to-bg-computer-use-kit`
 
@@ -127,19 +127,19 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
 
 ### Phase 1 — SwiftPM scaffolding (2-3h)
 
-- [ ] **1.1** Write `native/macos/Package.swift`:
+- [x] **1.1** Write `native/macos/Package.swift`:
   - `swift-tools-version: 6.2`
   - `platforms: [.macOS(.v14)]`
   - dependency: `.package(url: "https://github.com/actuallyepic/background-computer-use.git", revision: "<SHA from 0.2>")`
   - executable target `McpComputerUseHelper` linking `BackgroundComputerUseKit`
-- [ ] **1.2** Write `native/macos/Sources/McpComputerUseHelper/main.swift`:
+- [x] **1.2** Write `native/macos/Sources/McpComputerUseHelper/main.swift`:
   - Initialize `BackgroundComputerUseRuntime()` (visual cursor disabled by default — explicit in upstream docs)
   - Read NDJSON from stdin line-by-line
   - Dispatch each request to `ProtocolBridge.handle(_:runtime:)`
   - Write `{id, ok, result|error}` JSON line to stdout
   - On `cmd: shutdown`, reply `ok` then schedule `exit(0)` after 25ms (matches current bridge.swift:1126-1132 behavior)
   - Errors caught at this level wrap to `{ok: false, error: {code: "internal_error", message: "..."}}`
-- [ ] **1.3** Write `native/macos/Sources/McpComputerUseHelper/ProtocolBridge.swift`:
+- [x] **1.3** Write `native/macos/Sources/McpComputerUseHelper/ProtocolBridge.swift`:
   - `static func handle(_ req: [String: Any], runtime: BackgroundComputerUseRuntime) throws -> [String: Any]`
   - Switch on `req["cmd"] as? String`:
     - `"checkPermissions"` → call `runtime.permissions()`, translate DTO to `{accessibility: Bool, screenRecording: Bool}` (drop `promptable` and `checkedAt` for now — not in our wire shape)
@@ -152,18 +152,18 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
     - `"scroll"` → DO NOT call upstream. Call `LocalScroll.scroll(direction:amount:pid:)`. Returns `{ok: true, direction, amount}` to match current shape.
     - `"shutdown"` → return `{ok: true}`; `main.swift` schedules exit.
     - default → throw `BridgeError(code: "unknown_cmd", message: "...")`
-- [ ] **1.4** Write `native/macos/Sources/McpComputerUseHelper/LocalScroll.swift`:
+- [x] **1.4** Write `native/macos/Sources/McpComputerUseHelper/LocalScroll.swift`:
   - Lift the body of `scroll(_:)` from old `native/macos/bridge.swift:1087-1124`
   - Drop the JSON-shape glue (the wrapper in main.swift handles that)
   - Keep just: direction → CGEvent xDelta/yDelta, post via `.cghidEventTap` or to specific pid
-- [ ] **1.5** Write `native/macos/Sources/McpComputerUseHelper/ErrorMapping.swift`:
+- [x] **1.5** Write `native/macos/Sources/McpComputerUseHelper/ErrorMapping.swift`:
   - Catch upstream throws; map to our error codes:
     - `RuntimeError.windowNotFound` → `"window_not_found"`
     - `RuntimeError.permissionDenied` → `"accessibility_denied"` or `"screen_recording_denied"`
     - `RuntimeError.captureTimeout` → `"screenshot_timeout"`
     - everything else → `"helper_error"` with the message preserved
   - Real error type names need verification in 0.1 — these are placeholders.
-- [ ] **1.6** `swift build -c release --package-path native/macos` — verify it compiles. Binary lands at `native/macos/.build/<arch>-apple-macosx/release/McpComputerUseHelper`.
+- [x] **1.6** `swift build -c release --package-path native/macos` — verify it compiles. Binary lands at `native/macos/.build/<arch>-apple-macosx/release/McpComputerUseHelper`. **→ Build succeeds in 1.96s. Mach-O 64-bit arm64 binary, 6.3 MB.**
 
 ### Phase 2 — Build pipeline (1-2h)
 
@@ -453,4 +453,77 @@ Neither is surfaced through the wire protocol — both are internal optimization
 - [x] **0.3** Branch created: `feat/swap-to-bg-computer-use-kit`
 - [x] **0.4** Swift toolchain verified: 6.2.4, arm64-apple-macosx26.0
 
-**Next:** Phase 1 (SwiftPM scaffolding). Estimated 4-6h.
+---
+
+## Phase 1 — Findings (2026-04-29)
+
+Phase 1 was executed by a forked subagent against the Phase 0 Findings spec. All 5 wrapper files written; `swift build -c release` succeeds in 1.96s. Total wrapper code: **620 lines**, vs old `bridge.swift` 1,549 — net ~−929 once Phase 5 deletes the legacy file.
+
+### Files written (uncommitted, on feature branch `feat/swap-to-bg-computer-use-kit`)
+
+| Path | Lines | Role |
+|---|---|---|
+| `native/macos/Package.swift` | 25 | SwiftPM manifest, pinned to `dcf55a3f…` |
+| `native/macos/Sources/McpComputerUseHelper/main.swift` | 103 | NDJSON stdio loop, stderr-only logging, shutdown exit |
+| `native/macos/Sources/McpComputerUseHelper/ProtocolBridge.swift` | 404 | 10-cmd dispatch + DTO translation + WrapperState caches |
+| `native/macos/Sources/McpComputerUseHelper/LocalScroll.swift` | 47 | CGEvent scroll, lifted from old `bridge.swift:1087-1124` |
+| `native/macos/Sources/McpComputerUseHelper/ErrorMapping.swift` | 41 | String-heuristic for upstream's package-internal error enums |
+
+Build artifacts (also untracked): `native/macos/.build/` and `native/macos/Package.resolved`.
+
+### Wire-shape verification
+
+Cross-checked wrapper responses against `tests/fixtures/mock-helper.mjs` per cmd. Match across the board. Key shapes:
+
+- `checkPermissions` → `{accessibility, screenRecording}` (drilled through `.granted`)
+- `listApps` → `[{appName, pid, bundleId}]` filtered to `activationPolicy == "regular"`
+- `listWindows` → `[{windowId, windowRef, title, framePoints:{x,y,w,h}, isMinimized, isOnscreen, isMain, isFocused}]`
+- `getFrontmost` → `{appName, pid, bundleId, windowTitle, windowId, windowRef}` (with focused→main→onScreen→first heuristic)
+- `screenshot` → `{pngBase64, width, height, scaleFactor}` where `scaleFactor = pixelWidth / frameAppKit.width`
+- `mouseClick` → `{clicked: true}`
+- `typeText` → `{typed: true}`
+- `keyPress` → `{ok, key, keycode, modifiers}` (keycode from `response.parsedKey?.keyCode ?? 0`)
+- `scroll` → `{ok, direction, amount}`
+- `shutdown` → `{ok: true}` then 25ms-delayed `exit(0)`
+
+The mock fixture has `scaleFactor: 2` on `MOCK_WINDOW` (listWindows path), but `mapWindowItem` in `src/native/macos-bridge.ts:178` does NOT consume it. The wrapper omits it from listWindows responses — fine, it's a no-op field on the TS side.
+
+### Deviations from the original plan (all sensible — record so reviewers don't re-question them)
+
+1. **Added 10th cmd `listApps`.** Plan said 9 cmds. `src/native/macos-bridge.ts:161` and `tests/fixtures/mock-helper.mjs:38` both use it internally for pid→bundleId resolution. The wrapper had to implement it or `getFrontmostWindow`'s enrichment path would break.
+
+2. **Field-name translation upstream→wire.** Phase 0 Findings cautioned about upstream's `windowID`/`frameAppKit`/`isOnScreen`. The wrapper translates these to our existing wire-shape names (`windowRef`/`framePoints:{x,y,w,h}`/`isOnscreen`) per `mock-helper.mjs` and `mapWindowItem`. Both `windowId` (Int) and `windowRef` (String) included in every window response so TS can use either. See `ProtocolBridge.swift:108-124` (`translateWindowDTO`).
+
+3. **Throw on `response.ok == false`.** Upstream's `ClickResponse`/`TypeTextResponse`/`PressKeyResponse` carry `ok: Bool` even when no error is thrown (e.g. unsupported, effect_not_verified). The wrapper throws `BridgeError(code: "click_failed" | "type_text_failed" | "key_press_failed", message: response.summary)` when `ok == false`. Old `bridge.swift` semantics were "no throw = success", so this preserves intent and gives TS-side a meaningful error code.
+
+4. **`postStateToken` cached on action responses.** Plan only mentioned caching from `getWindowState`, but `ClickResponse`/`TypeTextResponse`/`PressKeyResponse` all expose `postStateToken: String?`. Wrapper updates `state.windowIDToStateToken[windowID]` from those when present, so the next click's stateToken is fresh without an extra `getWindowState` round-trip.
+
+5. **`DispatchQueue.global()` for shutdown exit.** Plan referenced `DispatchQueue.main.asyncAfter`, but a CLI binary blocking on stdin doesn't pump the main RunLoop — `.main.asyncAfter` may never fire. Used `DispatchQueue.global().asyncAfter` so the 25ms-delayed `exit(0)` actually runs. TS-side sends SIGTERM after 2s anyway; this just ensures self-exit happens during normal shutdown.
+
+6. **Per-app failure tolerance in `listWindows` no-filter mode.** When iterating all regular apps, if `runtime.listWindows(.init(app: bundleID))` throws for one app (e.g. AX permission edge case), the wrapper continues with the rest instead of failing the whole call. Matches old `bridge.swift:1150-1157`. See `ProtocolBridge.swift:80-83`.
+
+7. **Module name vs product name.** Upstream's Package.swift declares product `BackgroundComputerUseKit` over target `BackgroundComputerUse`. Swift `import` uses the *target/module* name → `import BackgroundComputerUse` (not `BackgroundComputerUseKit`). The `.product(name: "BackgroundComputerUseKit", ...)` in our Package.swift is correct as the SwiftPM dependency declaration.
+
+8. **Swift 6 actor isolation.** Top-level globals (`runtime`, `wrapperState`) are implicitly `@MainActor`. `handleLine` annotated `@MainActor` to satisfy isolation; the stdin read loop runs at top level (already MainActor-isolated implicitly).
+
+### Open questions surfaced — none blocking, all need Phase 3 attention
+
+1. **`activationPolicy` serialization format.** Upstream's `RunningAppDTO.activationPolicy` is a `String` (not enum) per the inferred Codable shape. Wrapper filters by `== "regular"`. Not 100% confirmed that upstream serializes `NSRunningApplication.ActivationPolicy.regular.rawValue` as the literal `"regular"` (vs. `.regular`, `0`, etc.). **First thing to check if `listApps` returns empty during Phase 3 testing.**
+
+2. **`scaleFactor` derivation under Retina.** Plan said `image.pixelWidth / response.window.frameAppKit.width`. `frameAppKit` is in AppKit logical points, `pixelWidth` is raw pixels — gives 1.0 on non-Retina, 2.0 on Retina. Matches mock's `scaleFactor: 2`. Worth confirming on a real Retina display in Phase 3.
+
+3. **ErrorMapping is string-heuristic only.** Upstream's actual error enums (`DiscoveryError`, `PressKeyParserError`, etc.) are declared *internal* to the package — not `public` — so the wrapper can't pattern-match them from outside. Falls back to `String(describing: error)` and substring matching against `unsupportedKey`/`windowNotFound`/`accessibilityDenied`/etc. (See `ErrorMapping.swift:13-40`.) The mapping is best-effort; specific upstream error messages may not match the heuristic verbatim. Phase 3 will surface any mismatches → adjust the heuristic.
+
+4. **`Package.resolved` materialization.** SwiftPM wrote `native/macos/Package.resolved` at the package root after the first build. Recommend committing it (this is an executable target, not a library — lockfiles in git are right for binaries).
+
+5. **`.gitignore` cleanup.** `native/macos/.build/` is currently untracked and clutters `git status`. Add to `.gitignore` before the Phase 1 commit. Existing `.gitignore` already ignores `.context/`, `coverage/`, `node_modules/`, `build/` — match that style.
+
+### What's NOT done in Phase 1 (for clarity)
+
+- Nothing committed yet. Phase 1 work sits uncommitted on `feat/swap-to-bg-computer-use-kit`. Two earlier commits this session: `1193f2f` (docs commit — plan + Phase 0 findings) and `66021ad` (allowlist patch — git-SHA + project-path patterns).
+- `scripts/build-native.mjs` and `scripts/setup-helper.mjs` still run `xcrun swiftc` (Phase 2 work).
+- `package.json` still says `0.1.0-beta.1` (Phase 2 work — bump to `0.2.0-beta.1`).
+- `native/macos/bridge.swift` still present (Phase 5 deletes it; until then it's reference for any cross-check work).
+- No tests run yet (Phase 3).
+
+**Next:** Phase 2 (build pipeline swap — modify `scripts/build-native.mjs` + `scripts/setup-helper.mjs` to use `swift build`, bump `package.json` version, update `files[]`). Estimated 1-2h. Phase 1 commit + .gitignore + Package.resolved decision either lands first or bundles into the Phase 2 commit set per Klemens's preference.
