@@ -1,0 +1,14 @@
+{
+  "originHash" : "a7252b6af1ff5f0d233572dd7b98e6fb0af6f1eeb5bf30a49be17deea286452d",
+  "pins" : [
+    {
+      "identity" : "background-computer-use",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/actuallyepic/background-computer-use.git",
+      "state" : {
+        "revision" : "dcf55a3feee557ebdcda4afa6241c82dc6abdd8c"
+      }
+    }
+  ],
+  "version" : 3
+}
