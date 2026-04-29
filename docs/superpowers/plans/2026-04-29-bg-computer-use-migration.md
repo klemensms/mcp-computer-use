@@ -1,6 +1,6 @@
 # v0.2.0 Migration: replace `bridge.swift` with SwiftPM-consumed `BackgroundComputerUseKit`
 
-**Status:** approved 2026-04-29. Phases 0 + 1 complete; Phase 2 not yet started. Phase 1 work is uncommitted on the feature branch — awaiting review before commit.
+**Status:** approved 2026-04-29. Phases 0 + 1 + 2 complete; Phase 3 not yet started. All work committed on the feature branch through `7aaf655`.
 
 **Branch:** `feat/swap-to-bg-computer-use-kit`
 
@@ -167,19 +167,19 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
 
 ### Phase 2 — Build pipeline (1-2h)
 
-- [ ] **2.1** Modify `scripts/build-native.mjs`:
+- [x] **2.1** Modify `scripts/build-native.mjs`:
   - Replace `xcrun swiftc ...` with `swift build -c release --package-path native/macos`
   - Copy `.build/<arch>-apple-macosx/release/McpComputerUseHelper` → `~/.mcp-computer-use/bridge`
   - Detect arch via `process.arch === "arm64" ? "arm64-apple-macosx" : "x86_64-apple-macosx"`
-- [ ] **2.2** Modify `scripts/setup-helper.mjs`:
+- [x] **2.2** Modify `scripts/setup-helper.mjs`:
   - Same build command swap
   - Same copy step
   - Update the "On first run" message to mention permissions will likely re-prompt once because the binary identity has changed
-- [ ] **2.3** Modify `package.json`:
+- [x] **2.3** Modify `package.json`:
   - Bump `version` to `0.2.0-beta.1`
   - `files[]`: add `"native/macos/Package.swift"`, `"native/macos/Package.resolved"`, `"native/macos/Sources"`; remove `"native/macos/bridge.swift"`
   - Add a note in scripts that `swift` (full Xcode) is required, not just Xcode CLT
-- [ ] **2.4** Run `node scripts/setup-helper.mjs` end-to-end — confirm a working binary lands at `~/.mcp-computer-use/bridge`.
+- [x] **2.4** Run `node scripts/setup-helper.mjs` end-to-end — confirm a working binary lands at `~/.mcp-computer-use/bridge`. **→ Substituted: `node scripts/build-native.mjs --output /tmp/mcp-cu-bridge-test` (avoids overwriting the existing v0.1 binary at the production path until Phase 3). Build succeeded in 0.87s with warm SwiftPM cache; smoke-tested with `echo '{"id":"smoke","cmd":"shutdown"}' | /tmp/mcp-cu-bridge-test` → returned `{"ok":true,"result":{"ok":true},"id":"smoke"}` and exited 0. Production binary swap deferred to start of Phase 3.**
 
 ### Phase 3 — Wire-compat verification (2-3h)
 
@@ -526,4 +526,34 @@ The mock fixture has `scaleFactor: 2` on `MOCK_WINDOW` (listWindows path), but `
 - `native/macos/bridge.swift` still present (Phase 5 deletes it; until then it's reference for any cross-check work).
 - No tests run yet (Phase 3).
 
-**Next:** Phase 2 (build pipeline swap — modify `scripts/build-native.mjs` + `scripts/setup-helper.mjs` to use `swift build`, bump `package.json` version, update `files[]`). Estimated 1-2h. Phase 1 commit + .gitignore + Package.resolved decision either lands first or bundles into the Phase 2 commit set per Klemens's preference.
+**Next:** Phase 2 — superseded; see Phase 2 Findings below.
+
+---
+
+## Phase 2 — Findings (2026-04-29)
+
+Phase 2 was straightforward; no surprises. Three files modified, one commit (`7aaf655 chore(build): switch helper build to swift build`).
+
+### Build script changes
+
+`scripts/build-native.mjs` and `scripts/setup-helper.mjs` both swapped from `xcrun swiftc <flags> <source> -o <out>` to `swift build -c release --package-path native/macos`, followed by a `fs.copyFile` from `native/macos/.build/<arch>-apple-macosx/release/McpComputerUseHelper` to the install destination. `archDir()` helper detects arm64 vs x86_64 via `process.arch`. Drops the framework flags (`ApplicationServices`, `AppKit`, `ScreenCaptureKit`, `Foundation`) — SwiftPM resolves those via the dependency declared in `Package.swift`.
+
+`setup-helper.mjs` first-run message extended with: "After upgrading from a previous version, permissions may re-prompt once because the binary identity has changed." Postinstall failure message updated: builds now require full Xcode (`swift` ships with Xcode, not Xcode CLT alone).
+
+### `package.json` changes
+
+- `version`: `0.1.0-beta.1` → `0.2.0-beta.1`
+- `files[]`: dropped `native/macos/bridge.swift`; added `native/macos/Package.swift`, `native/macos/Package.resolved`, `native/macos/Sources` (directory glob).
+
+### Verification done in Phase 2
+
+Substituted `node scripts/build-native.mjs --output /tmp/mcp-cu-bridge-test` for the planned `setup-helper.mjs` end-to-end run, deliberately to avoid overwriting Klemens's existing v0.1 binary at `~/.mcp-computer-use/bridge` until Phase 3 testing is gated behind explicit user approval. Build succeeded in 0.87s (warm SwiftPM cache from Phase 1.6); produced a working Mach-O 64-bit arm64 binary (6.3 MB, mode 0755). Smoke-tested via `echo '{"id":"smoke","cmd":"shutdown"}' | /tmp/mcp-cu-bridge-test` → returned `{"ok":true,"result":{"ok":true},"id":"smoke"}` and exited 0. Confirms the new helper at least starts, parses NDJSON, dispatches via `ProtocolBridge.handle`, replies on stdout, and exits cleanly.
+
+### What's NOT done in Phase 2 (for clarity)
+
+- Production binary at `~/.mcp-computer-use/bridge` still v0.1 (the old vendored bridge.swift, built by xcrun-swiftc). Swap is the first step of Phase 3, after explicit go-ahead from Klemens — overwriting it triggers TCC re-prompt on next use, which is reversible but visible.
+- `npm test` not run (Phase 3.1).
+- No integration test, manual smoke commands, or Claude Code MCP smoke (Phase 3.2-3.5).
+- Old `native/macos/bridge.swift` still on disk for reference (deleted in Phase 5).
+
+**Next:** Phase 3 (wire-compat verification). Recommended order: (a) ask Klemens whether to swap the production binary now or run unit tests against mock-helper first; (b) run `npm test` — every existing unit test must pass unchanged; (c) only after that, swap the binary and run integration + the 9 manual smoke commands. Phase 3 surfaces any of the open questions from Phase 1 Findings (activationPolicy serialization, scaleFactor under Retina, ErrorMapping heuristic accuracy).
