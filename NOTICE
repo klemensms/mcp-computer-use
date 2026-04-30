@@ -1,20 +1,25 @@
 mcp-computer-use
 ================
 
-This product was seeded from injaneity/pi-computer-use
-(https://github.com/injaneity/pi-computer-use), licensed under the MIT license.
-The Swift helper at native/macos/bridge.swift started as a copy of upstream
-commit 96434a7 (v0.1.1) and has been extended here. The file, the IPC
-protocol, and the command surface are owned by this project going forward —
-we do NOT commit to wire compatibility with the upstream and expect to
-diverge as agent needs evolve.
+This product depends on `BackgroundComputerUseKit`
+(https://github.com/actuallyepic/background-computer-use), MIT-licensed,
+© cam + anupam (dubdubdub labs). Pinned to commit
+`dcf55a3feee557ebdcda4afa6241c82dc6abdd8c`. The Swift wrapper at
+native/macos/Sources/McpComputerUseHelper/ imports the kit via SwiftPM
+and translates upstream's API into this project's existing JSON-over-stdio
+wire protocol; see UPSTREAM_SYNC.md for the upgrade ritual.
 
-The Node-side TypeScript (src/native/macos-bridge.ts) is a clean
-re-implementation tailored to the MCP server lifecycle and safety model of
-this project.
+The Node-side TypeScript (src/native/macos-bridge.ts) is owned by this
+project, tailored to the MCP server lifecycle and safety model.
 
-Upstream (seed):
-  Copyright (c) 2026 Zane Chee
+Historical note: prior releases (v0.1.x) shipped a vendored Swift helper
+seeded from injaneity/pi-computer-use commit 96434a7 (MIT © Zane Chee).
+That file was deleted in v0.2.0 when the helper internals were swapped to
+BackgroundComputerUseKit. Git history preserves the original for archeology.
+
+Upstream dependency:
+  Copyright (c) cam + anupam (dubdubdub labs)
+  https://github.com/actuallyepic/background-computer-use
   Licensed MIT.
 
 This project:
