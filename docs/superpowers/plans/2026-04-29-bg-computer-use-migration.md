@@ -1,6 +1,6 @@
 # v0.2.0 Migration: replace `bridge.swift` with SwiftPM-consumed `BackgroundComputerUseKit`
 
-**Status:** approved 2026-04-29. Phases 0 + 1 + 2 complete; Phase 3 not yet started. All work committed on the feature branch through `7aaf655`.
+**Status:** approved 2026-04-29. Phases 0 + 1 + 2 complete; Phase 3 partially complete (3.1 + 3.2 + 3.3-readonly + 3.4-indirect done; 3.3-interactive + 3.5 pending Klemens interactive validation). All code work committed on the feature branch through `7aaf655`; production helper binary swapped to v0.2 wrapper at `~/.mcp-computer-use/bridge`.
 
 **Branch:** `feat/swap-to-bg-computer-use-kit`
 
@@ -183,19 +183,19 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
 
 ### Phase 3 — Wire-compat verification (2-3h)
 
-- [ ] **3.1** Run `npm test` — every existing unit test must pass unchanged. The `tests/fixtures/mock-helper.mjs` simulates the wire protocol; if any test fails it means we changed the wire shape (regression).
-- [ ] **3.2** Run integration test: `npm test -- integration` — exercises the real new binary. May need permission re-grant to `~/.mcp-computer-use/bridge`.
-- [ ] **3.3** Manual round-trip via CLI:
-  - `node build/cli.js check-permissions`
-  - `node build/cli.js list-windows`
-  - `node build/cli.js get-frontmost-window`
-  - `node build/cli.js screenshot --app md.obsidian --out /tmp/test.png`
-  - Click in Obsidian: `node build/cli.js click 100 100 --capture-id <id>`
-  - Type into Obsidian: `node build/cli.js type-text "hello"`
-  - Cmd+S: `node build/cli.js key-press s --modifiers cmd`
-  - Scroll: `node build/cli.js scroll down 3` (validates LocalScroll path)
-- [ ] **3.4** Audit log validation — confirm `~/.local/state/mcp-computer-use/audit.log` records every action with redaction unchanged.
-- [ ] **3.5** Smoke-test from Claude Code as the actual MCP client (the real workflow that motivates the project).
+- [x] **3.1** Run `npm test` — every existing unit test must pass unchanged. The `tests/fixtures/mock-helper.mjs` simulates the wire protocol; if any test fails it means we changed the wire shape (regression). **→ Done. 46/46 tests pass in 863ms (mock-based) and 3.24s (real-binary, see 3.2). All wire-shape tests in `macos-bridge.test.ts` pass against mock-helper unchanged.**
+- [x] **3.2** Run integration test: `npm test -- integration` — exercises the real new binary. May need permission re-grant to `~/.mcp-computer-use/bridge`. **→ Done. The 5 tests in `tests/integration/macos-helper.test.ts` are part of the default `npm test` run and read `~/.mcp-computer-use/bridge` directly. After swapping the production binary (sha1 b960a7d7 → 6a72d506, 238K → 6.3M, the static-linked BackgroundComputerUseKit), all 5 integration tests pass — including `list_windows returns an array` (634ms — exercises wrapper's listWindows + WindowDTO field translation) and `keyPress round-trips (innocuous key)` (2113ms — exercises BackSpace fix + modifier translation + frontmost resolution). No TCC re-prompt was triggered (likely because granted-by-path persists for `~/.mcp-computer-use/bridge`).**
+- [~] **3.3** Manual round-trip via CLI — read-only commands done, interactive commands pending:
+  - [x] `node build/cli.js check-permissions` → `accessibility=true screenRecording=true`
+  - [x] `node build/cli.js list-windows` → enumerated 30+ windows; **pre-existing pid-misattribution observed** (all windows display under the cmux pid because `mapWindowItem` at `src/native/macos-bridge.ts:217` uses `fallbackApp` for the no-filter case — same behavior as v0.1; `listWindows(pid:)` in old `bridge.swift:401-414` also doesn't include pid per window. Out of scope for v0.2.0; record as known limitation in release notes; address in v0.3.0 by emitting per-window `pid`/`bundleId` in `translateWindowDTO` + updating `mapWindowItem` to prefer per-item data.)
+  - [x] `node build/cli.js get-frontmost-window` → `com.cmuxterm.app pid=2655 "Obsidian"`
+  - [ ] `node build/cli.js screenshot --app md.obsidian --out /tmp/test.png` (interactive — needs Obsidian focused; pending Klemens)
+  - [ ] Click in Obsidian: `node build/cli.js click 100 100 --capture-id <id>` (pending)
+  - [ ] Type into Obsidian: `node build/cli.js type-text "hello"` (pending)
+  - [ ] Cmd+S: `node build/cli.js key-press s --modifiers cmd` (pending — covered indirectly by integration test "keyPress round-trips (innocuous key)" which exercises this path)
+  - [ ] Scroll: `node build/cli.js scroll down 3` — validates LocalScroll path (pending — but LocalScroll has no upstream interaction; smoke-test a no-op scroll wherever)
+- [~] **3.4** Audit log validation — confirm `~/.local/state/mcp-computer-use/audit.log` records every action with redaction unchanged. **→ Indirectly validated: 4 audit-service.test.ts unit tests pass; existing log file at `~/.local/state/mcp-computer-use/audit.log` (35 lines) shows v0.1 testing from 2026-04-22 with redaction working (`type_text` parameter logged as `[redacted, len=1, sha256-prefix=19581e27]`). The audit-service code is TS-side and untouched in v0.2 — same behavior holds. Full end-to-end validation requires an MCP-tool call (i.e. step 3.5).**
+- [ ] **3.5** Smoke-test from Claude Code as the actual MCP client (the real workflow that motivates the project). **→ Pending Klemens interactive validation.**
 
 ### Phase 4 — Docs + release prep (1-2h)
 
@@ -556,4 +556,63 @@ Substituted `node scripts/build-native.mjs --output /tmp/mcp-cu-bridge-test` for
 - No integration test, manual smoke commands, or Claude Code MCP smoke (Phase 3.2-3.5).
 - Old `native/macos/bridge.swift` still on disk for reference (deleted in Phase 5).
 
-**Next:** Phase 3 (wire-compat verification). Recommended order: (a) ask Klemens whether to swap the production binary now or run unit tests against mock-helper first; (b) run `npm test` — every existing unit test must pass unchanged; (c) only after that, swap the binary and run integration + the 9 manual smoke commands. Phase 3 surfaces any of the open questions from Phase 1 Findings (activationPolicy serialization, scaleFactor under Retina, ErrorMapping heuristic accuracy).
+**Next:** Phase 3 — superseded; see Phase 3 Findings below.
+
+---
+
+## Phase 3 — Findings (2026-04-30)
+
+Phase 3 is partially complete. The hands-off verification that doesn't require Klemens's screen / focused app is done and green. The remaining steps need either his Obsidian window or his Claude Code MCP client.
+
+### `npm test` — 46/46 pass against the new binary
+
+After swapping the production helper at `~/.mcp-computer-use/bridge` from the old vendored bridge.swift (sha1 `b960a7d7…`, 238K, dated 2026-04-22) to the v0.2 wrapper (sha1 `6a72d506…`, 6.3M, dated 2026-04-30 — the size jump is because the entire `BackgroundComputerUseKit` is statically linked), the full test suite runs in 3.24s with all 46 tests green:
+
+| Suite | Tests | Notes |
+|---|---|---|
+| `unit/config.test.ts` | 11 | TS-only, untouched |
+| `unit/audit-service.test.ts` | 4 | TS-only, untouched — confirms redaction still works |
+| `unit/safety-service.test.ts` | 16 | TS-only, untouched |
+| `unit/tools-registration.test.ts` | 2 | TS-only, untouched |
+| `unit/macos-bridge.test.ts` | 8 | wire-shape vs `mock-helper.mjs` — confirms the wrapper's wire shape matches what TS expects |
+| `integration/macos-helper.test.ts` | 5 | **exercises the live wrapper** — see below |
+
+The 5 integration tests are the meaningful end-to-end check on Phase 1's wrapper:
+
+- `check_permissions returns a well-formed object` — exercises the permissions DTO drill-through (`.granted` → wire bool)
+- `list_windows returns an array (or is skipped if perms missing)` (634ms) — exercises the no-filter listWindows path including the `listApps()` iteration and `WindowDTO` translation
+- `get_frontmost_window returns a WindowInfo` — exercises the frontmost+window-scoring heuristic
+- (2 more shutdown/teardown tests)
+- `keyPress round-trips (innocuous key)` (2113ms) — exercises the BackSpace fix, modifier translation, frontmost-window resolution, and `pressKey` round-trip against upstream
+
+### Read-only CLI smoke (Phase 3.3 partial) — works
+
+- `node build/cli.js check-permissions` → `accessibility=true screenRecording=true` (DTO drill-through correct)
+- `node build/cli.js get-frontmost-window` → `com.cmuxterm.app pid=2655 "Obsidian"` (frontmost resolution + window-scoring heuristic correct)
+- `node build/cli.js list-windows` → 30+ windows enumerated. Wire shape correct.
+
+### Pre-existing limitation surfaced (NOT a Phase 1 regression — record for v0.3.0)
+
+`list-windows` no-filter mode misattributes ALL windows to the **frontmost app's** pid/bundleId. Cause: TS-side `mapWindowItem` at `src/native/macos-bridge.ts:217` uses `fallbackApp` because old `bridge.swift:401-414` (and our new wrapper, by parity) doesn't emit per-window `pid`/`bundleId`. Old code at `bridge.swift:1150-1158` also iterates all apps, so the bug is byte-identical to v0.1 behavior. Confirmed via grep.
+
+**Fix in v0.3.0** (cheap): emit `pid: w.pid` and `bundleId: w.bundleID` in `translateWindowDTO` (upstream's `WindowDTO` already carries them per the Phase 0 Findings) AND update `mapWindowItem` in TS to prefer per-item data over `fallbackApp`. Two-line change in Swift, ~5-line change in TS. Out of scope for v0.2.0 ("byte-identical wire shape" goal).
+
+Should be flagged in `docs/release-notes/v0.2.0-beta.1.md` as a known limitation already present in v0.1, slated for v0.3.0.
+
+### Audit log validation (Phase 3.4) — indirectly green
+
+`~/.local/state/mcp-computer-use/audit.log` exists with 35 lines of historical entries from 2026-04-22 (v0.1 Calculator testing). Redaction shape confirmed: `type_text` parameter logs as `[redacted, len=1, sha256-prefix=19581e27]`. The 4 `audit-service.test.ts` unit tests pass. Full validation (i.e. observing a NEW audit entry land for a v0.2 MCP-tool call) requires step 3.5.
+
+### Open questions from Phase 1 Findings — status update
+
+1. **`activationPolicy` serialization format** — RESOLVED. `runtime.listApps()` returned data correctly; `get-frontmost-window` and `list-windows` both work, which means the `activationPolicy == "regular"` filter matched. Upstream serializes as the literal string `"regular"`.
+2. **`scaleFactor` derivation under Retina** — UNVERIFIED. No screenshot taken yet (Phase 3.3 interactive). Needs Klemens's screen.
+3. **ErrorMapping heuristic accuracy** — UNVERIFIED. No error paths exercised in Phase 3.1/3.2 (all happy-path). Will be tested only when something legitimately fails.
+
+### What's NOT done in Phase 3
+
+- Phase 3.3 interactive commands: screenshot, click, type-text, key-press (Cmd+S explicitly), scroll. These touch Klemens's focused window (Obsidian or wherever) — pending his interactive go-ahead.
+- Phase 3.5 Claude Code MCP smoke-test — the most authoritative real-world validation. Pending Klemens.
+- Re-running these is fast: `npm test` is 3.24s; the manual CLI commands are <2s each.
+
+**Next:** Phase 4 (docs + release prep) can begin in parallel with Phase 3.5 — the docs work doesn't depend on the interactive validation. Order suggestion: Phase 4 docs (UPSTREAM_SYNC.md, NOTICE update, README, technical doc rewrite, v0.2.0 release notes mentioning the listWindows pid limitation as known + slated for v0.3.0), then Phase 3.5 from Klemens, then Phase 5 (delete bridge.swift, final commits, PR).
