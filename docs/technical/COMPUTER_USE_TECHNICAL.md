@@ -132,20 +132,27 @@ screen state matches what the agent saw.
   captures the frontmost app.
 - `windowTitle?` — exact window title string. Pairs with `app`.
 
-**Returns**
+**Returns** — two MCP content blocks: a JSON `text` block, and an `image`
+block with the PNG (mime `image/png`). The text block:
+
 ```json
 {
   "capture_id": "cap_8f2a1c9e",
-  "png_base64": "iVBORw0KGgo...",
-  "window_info": {
-    "title": "Calculator",
-    "bundle_id": "com.apple.calculator",
+  "target": {
+    "appName": "Calculator",
+    "bundleId": "com.apple.calculator",
     "pid": 42881,
-    "frame": { "x": 0, "y": 38, "width": 300, "height": 400 }
+    "windowTitle": "Calculator",
+    "windowId": 12345
   },
-  "scale": 2
+  "size": { "width": 600, "height": 800, "scale": 2 }
 }
 ```
+
+Note the mixed casing: `capture_id` is snake_case (carried over from the
+original v0.1 input/output convention for that field) while everything
+else is camelCase. `WindowInfo`-shaped fields (`bundleId`, `windowTitle`,
+`appName`, `windowId`) are camelCase throughout the v0.2 wire shape.
 
 **Examples**
 
@@ -301,18 +308,29 @@ List visible windows across the system, optionally filtered by bundle ID.
 **Parameters**
 - `bundleId?` — filter to a single app.
 
-**Returns** `WindowInfo[]`.
+**Returns** `WindowInfo[]` — each entry has the full set of fields
+emitted by `mapWindowItem` in `src/native/macos-bridge.ts`:
 
 ```json
 [
   {
-    "title": "Calculator",
-    "bundle_id": "com.apple.calculator",
+    "appName": "Calculator",
+    "bundleId": "com.apple.calculator",
     "pid": 42881,
+    "windowId": 12345,
+    "title": "Calculator",
+    "isFrontmost": true,
+    "isMinimized": false,
+    "isOnscreen": true,
     "frame": { "x": 0, "y": 38, "width": 300, "height": 400 }
   }
 ]
 ```
+
+`isFrontmost` is derived from upstream's `isFocused || isMain`. The
+no-filter call mode misattributes `pid`/`bundleId` to the frontmost app
+across all entries (carried over from v0.1; slated for v0.3.0). Pass
+`bundleId` explicitly for correct attribution.
 
 **Examples**
 
