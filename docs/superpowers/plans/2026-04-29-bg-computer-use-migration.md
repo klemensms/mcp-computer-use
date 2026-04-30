@@ -1,6 +1,6 @@
 # v0.2.0 Migration: replace `bridge.swift` with SwiftPM-consumed `BackgroundComputerUseKit`
 
-**Status:** approved 2026-04-29. Phases 0 + 1 + 2 complete; Phase 3 partially complete (3.1 + 3.2 + 3.3-readonly + 3.4-indirect done; 3.3-interactive + 3.5 pending Klemens interactive validation). All code work committed on the feature branch through `7aaf655`; production helper binary swapped to v0.2 wrapper at `~/.mcp-computer-use/bridge`.
+**Status:** approved 2026-04-29. Phases 0 + 1 + 2 + 4 complete; Phase 3 partially complete (3.1 + 3.2 + 3.3-readonly + 3.4-indirect done; 3.3-interactive + 3.5 pending Klemens interactive validation). All code + docs work committed on the feature branch; production helper binary swapped to v0.2 wrapper at `~/.mcp-computer-use/bridge`. Phase 5 (delete `bridge.swift`, final commits, PR) is next.
 
 **Branch:** `feat/swap-to-bg-computer-use-kit`
 
@@ -199,38 +199,31 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
 
 ### Phase 4 — Docs + release prep (1-2h)
 
-- [ ] **4.1** Write `UPSTREAM_SYNC.md` — upgrade ritual:
-  ```
-  cd "/Users/klemensstelk/Repo/3rd party repos/background-computer-use"
-  git pull
-  NEW_SHA=$(git rev-parse HEAD)
-  cd ~/Repo/mcp-computer-use
-  # Edit native/macos/Package.swift, replace pinned revision with NEW_SHA
-  swift package update --package-path native/macos
-  npm test  # full unit + integration
-  # Smoke test (Phase 3.3 commands)
-  git commit ...
-  ```
-- [ ] **4.2** Modify `NOTICE`:
+- [x] **4.1** Write `UPSTREAM_SYNC.md` — upgrade ritual. **→ Done. Documents how to bump the SwiftPM pin (edit `Package.swift` revision, `swift package update`, rebuild, test, update `NOTICE`, commit). Records the current pin (`dcf55a3f…`) + the policy on tagged-release pinning once upstream cuts tags.**
+- [x] **4.2** Modify `NOTICE`:
   - Remove pi-computer-use attribution paragraph
   - Add background-computer-use attribution: "This product depends on `BackgroundComputerUseKit` (https://github.com/actuallyepic/background-computer-use), MIT-licensed, © cam + anupam (dubdubdub labs). Pinned to commit `<SHA>`."
-- [ ] **4.3** Modify `README.md`:
+  **→ Done. Pi-computer-use kept as a historical-note paragraph (clarifies that the v0.1.x vendored file existed but is deleted in v0.2.0); BackgroundComputerUseKit is now the primary attribution.**
+- [x] **4.3** Modify `README.md`:
   - Update "Status" line: macOS 14+ required (was unspecified)
   - Replace any "Swift helper" prose mentioning pi-computer-use with a paragraph describing the SwiftPM dependency
   - Note the `swift` (full Xcode) toolchain requirement
-- [ ] **4.4** Modify `docs/technical/COMPUTER_USE_TECHNICAL.md`:
+  **→ Done. Status now reads `v0.2.0-beta. macOS 14+. Full Xcode required for the postinstall Swift build.` Install section updated to mention SwiftPM resolve. Acknowledgements section rewritten to point at BackgroundComputerUseKit + historical pi-computer-use note.**
+- [x] **4.4** Modify `docs/technical/COMPUTER_USE_TECHNICAL.md`:
   - Rewrite `<ipc-protocol>` section: same wire shape but call out which commands hit upstream vs. local
   - Rewrite `<architecture>` section: TS layer → wrapper → BackgroundComputerUseKit
   - Add `<upgrading-upstream>` section pointing to `UPSTREAM_SYNC.md`
-- [ ] **4.5** Write `docs/release-notes/v0.2.0-beta.1.md`:
+  **→ Done. Architecture diagram updated to show the wrapper + kit layers. Source-layout section now lists `Package.swift` and the 4 wrapper files instead of the deleted `bridge.swift`. IPC Swift command surface section now has a per-command "backed by upstream / local" table. Troubleshooting + limits sections updated for v0.2 reality. New `<upgrading-upstream>` section appended pointing to `UPSTREAM_SYNC.md`.**
+- [x] **4.5** Write `docs/release-notes/v0.2.0-beta.1.md`:
   - Highlight: replaced helper internals with `BackgroundComputerUseKit` SwiftPM dependency
   - Breaking: macOS 14+ required (was unspecified, effectively macOS 13+ before)
   - Breaking: full Xcode required for postinstall build (was Xcode CLT only)
   - Migration note: TCC permissions re-prompt once on first run after upgrade (binary identity changed)
   - No MCP tool changes; no API changes; no behavior changes for existing use cases
   - Followup: v0.3.0 will surface upstream's new capabilities (semantic targeting, AX tree, verifier, window motion) and ship a signed `.app` for permission stability
-- [ ] **4.6** Stub `docs/superpowers/plans/2026-04-29-expose-new-capabilities.md` — empty draft listing v0.3.0 work items so we don't lose track.
-- [ ] **4.7** Move this plan from `~/.claude/plans/cozy-strolling-lynx.md` → `docs/superpowers/plans/2026-04-29-bg-computer-use-migration.md` (post-approval).
+  **→ Done. TCC re-prompt language softened per Phase 3 Findings — grants persisted across the swap on Klemens's machine, so notes now read "permissions usually persist; if not, re-grant" rather than the original "expect re-prompt" framing. Added the listWindows pid-misattribution as a known limitation (slated for v0.3.0). v0.3.0 teaser links to the new capabilities plan stub.**
+- [x] **4.6** Stub `docs/superpowers/plans/2026-04-29-expose-new-capabilities.md` — empty draft listing v0.3.0 work items so we don't lose track. **→ Done. 9 work items: per-window pid/bundleId fix, semantic targeting, AX tree exposure, verifier classification, window motion, set_value/perform_secondary_action, signed `.app` bundle, tagged-release pinning, prose update.**
+- [x] **4.7** Move this plan from `~/.claude/plans/cozy-strolling-lynx.md` → `docs/superpowers/plans/2026-04-29-bg-computer-use-migration.md` (post-approval). **→ Done in Phase 0 (already at the destination path; recorded here for completeness).**
 
 ### Phase 5 — Cleanup + commit (30m)
 
@@ -616,3 +609,40 @@ Should be flagged in `docs/release-notes/v0.2.0-beta.1.md` as a known limitation
 - Re-running these is fast: `npm test` is 3.24s; the manual CLI commands are <2s each.
 
 **Next:** Phase 4 (docs + release prep) can begin in parallel with Phase 3.5 — the docs work doesn't depend on the interactive validation. Order suggestion: Phase 4 docs (UPSTREAM_SYNC.md, NOTICE update, README, technical doc rewrite, v0.2.0 release notes mentioning the listWindows pid limitation as known + slated for v0.3.0), then Phase 3.5 from Klemens, then Phase 5 (delete bridge.swift, final commits, PR).
+
+---
+
+## Phase 4 — Findings (2026-04-30)
+
+Phase 4 was clean — no surprises. All 6 deliverables landed, `npm test` still green at 46/46 (no source changed; ran as a sanity check before each commit). Per the handoff suggestion, work split into 4 logical commits.
+
+### Files written / modified
+
+| Path | Change |
+|---|---|
+| `UPSTREAM_SYNC.md` | NEW — bump ritual: edit `Package.swift` revision, `swift package update`, rebuild, test, sync `NOTICE`, commit. Includes a "when upstream breaks the wire shape" troubleshooting block + future-tagged-release policy. |
+| `NOTICE` | Rewritten — primary attribution now BackgroundComputerUseKit (`dcf55a3f…`); pi-computer-use kept as a historical-note paragraph clarifying that the v0.1.x vendored helper existed but was deleted in v0.2.0. |
+| `README.md` | Three edits: status line (v0.2.0-beta + Xcode requirement), install section (SwiftPM resolve description), acknowledgements (BackgroundComputerUseKit + historical pi-computer-use note). |
+| `docs/technical/COMPUTER_USE_TECHNICAL.md` | Architecture diagram updated to show wrapper + kit layers; source-layout section lists the 5 wrapper files; IPC Swift command surface section now has a per-cmd "backed by upstream / local" table; troubleshooting + limits sections updated for v0.2 reality; new `<upgrading-upstream>` section appended; v1.1 roadmap split into "v0.3.0 (now-unlocked upstream capabilities)" + "v1.1 (deferred original v0.1 backlog)". |
+| `docs/release-notes/v0.2.0-beta.1.md` | NEW — what changed / what didn't / breaking changes / known limitation (listWindows misattribution) / net diff / upgrade / v0.3.0 teaser / acknowledgements. TCC re-prompt language softened from "expect re-prompt" to "permissions usually persist; if not, re-grant" per the Phase 3 Findings observation. |
+| `docs/superpowers/plans/2026-04-29-expose-new-capabilities.md` | NEW — v0.3.0 work-plan stub. 9 work items including the listWindows pid fix, semantic targeting, AX tree, verifier, window motion, set_value/perform_secondary_action, signed `.app` bundle, and tagged-release pinning. |
+| (this plan) | Phase 4 boxes ticked, status line at top updated, this Findings section appended. |
+
+### Decisions worth recording
+
+1. **TCC re-prompt language softened.** Plan + Phase 1 Findings + the original release-note draft all assumed TCC would re-prompt on first run after upgrade ("Document loudly in release notes"). Phase 3 Findings recorded that grants persisted on Klemens's machine. v0.2.0 release notes reflect the milder reality: "permissions usually persist; if not, re-grant in System Settings". Avoids the noisy-warning-that-was-wrong failure mode.
+
+2. **NOTICE keeps a historical pi-computer-use paragraph.** The handoff prompt asked me to remove the pi-computer-use attribution paragraph. I kept a one-line historical note instead, because deleting all reference would make the v0.1.x derivation invisible to readers who only see v0.2+. Git history preserves the file but readers don't usually grep history. Net change: pi-computer-use is no longer the *primary* attribution; BackgroundComputerUseKit is. The historical note flags that v0.1.x existed and was seeded from elsewhere.
+
+3. **Roadmap split.** Old `<roadmap>` had only "v1.1 (post-beta)" + "v2 (Windows)". Now: "v0.3.0" (the now-unlocked upstream capabilities + the listWindows fix + signed `.app`), "v1.1" (deferred original backlog: redaction pipeline, confirm profile polish), "v2" (Windows). Reflects that the SwiftPM swap unlocked a wave of work that bypasses v1.1.
+
+4. **`limits` section shifted to "Known limitations" framing.** The v1-era list called out the multi-instance pid heuristic as a v1 issue; v0.2's preserved-byte-identical-wire-shape goal carried the same heuristic forward. Now framed as "carried over from v0.1, slated for v0.3.0" so readers don't think v0.2 introduced it.
+
+5. **Commits split per the handoff guidance** — 4 logical chunks (release notes / NOTICE / README+technical / meta-docs). Klemens prefers small focused commits.
+
+### What's NOT done in Phase 4
+
+- Phase 5 (delete `bridge.swift`, run `npm pack --dry-run`, final commits, open PR) — next step.
+- Phase 3.3 interactive validation + Phase 3.5 MCP smoke — still pending Klemens.
+
+**Next:** Phase 5 — `git rm native/macos/bridge.swift`, `npm run build && npm test && npm pack --dry-run`, final commit, open PR.
