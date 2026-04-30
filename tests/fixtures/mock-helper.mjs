@@ -1,5 +1,6 @@
 // Tiny mock helper: reads newline-delimited JSON on stdin, responds on stdout.
-// Speaks the SAME protocol as native/macos/bridge.swift (camelCase commands).
+// Speaks the SAME protocol as the Swift wrapper in native/macos/Sources/McpComputerUseHelper/
+// (camelCase commands; wire shape preserved verbatim across the v0.2.0 swap).
 // Extensively configurable via MOCK_HELPER_ERRORS env var.
 import readline from "node:readline";
 

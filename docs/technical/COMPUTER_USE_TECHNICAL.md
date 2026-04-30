@@ -14,12 +14,20 @@ A default-secure safety layer wraps every write action: per-app bundleId allowli
 presets (`stealth` / `permissive` / `readonly` / `confirm`). The agent cannot escalate
 at call-time — all behaviour is env-driven.
 
-The Swift helper at `native/macos/bridge.swift` was seeded from
-[injaneity/pi-computer-use](https://github.com/injaneity/pi-computer-use)
-(MIT © Zane Chee, commit `96434a7`) and extended here with `keyPress`, `scroll`,
-`shutdown`, and a richer `listWindows(bundleId:)`. This project owns the helper going
-forward — see `NOTICE` and spec §8 revision 2026-04-22b. No wire-compat commitment
-with upstream.
+As of v0.2.0, the Swift helper at `native/macos/Sources/McpComputerUseHelper/`
+is a thin (~620-line) wrapper over
+[`BackgroundComputerUseKit`](https://github.com/actuallyepic/background-computer-use)
+(MIT © cam + anupam, dubdubdub labs), consumed via SwiftPM and pinned by
+commit SHA in `native/macos/Package.swift`. The wrapper translates upstream's
+Swift API into this project's existing JSON-over-stdio wire protocol — the
+wire shape is unchanged from v0.1, so `src/native/macos-bridge.ts` and the
+TypeScript safety/audit layer are untouched. See `NOTICE` for attribution and
+[`UPSTREAM_SYNC.md`](../../UPSTREAM_SYNC.md) for the bump ritual.
+
+Earlier releases (v0.1.x) shipped a vendored helper seeded from
+[`injaneity/pi-computer-use`](https://github.com/injaneity/pi-computer-use);
+the v0.2.0 release notes document the swap. The wrapper preserves the wire
+shape verbatim, which is why the migration was opaque to MCP clients.
 
 Design spec: [`docs/superpowers/specs/2026-04-22-mcp-computer-use-design.md`](../superpowers/specs/2026-04-22-mcp-computer-use-design.md).
 </overview>
@@ -41,13 +49,25 @@ Design spec: [`docs/superpowers/specs/2026-04-22-mcp-computer-use-design.md`](..
   │                         │   src/services/* business logic + safety
   │                         │   src/native/*   NativeBridge + macOS impl
   └───────────┬─────────────┘
-              │  stdio (newline-delimited JSON)
+              │  stdio (newline-delimited JSON, unchanged from v0.1)
               ▼
   ┌─────────────────────────┐
-  │ bridge (Swift)          │   native/macos/bridge.swift
-  │  - AX API               │   (compiled to ~/.mcp-computer-use/bridge)
+  │ McpComputerUseHelper    │   native/macos/Sources/McpComputerUseHelper/
+  │ (Swift wrapper, ~620L)  │   (compiled to ~/.mcp-computer-use/bridge
+  │                         │    via `swift build`)
+  │   main.swift            │   NDJSON stdio loop
+  │   ProtocolBridge.swift  │   cmd dispatch + DTO translation + caches
+  │   LocalScroll.swift     │   CGEvent scroll (legacy, local-only)
+  │   ErrorMapping.swift    │   upstream errors → our error codes
+  └───────────┬─────────────┘
+              │  direct Swift API calls
+              ▼
+  ┌─────────────────────────┐
+  │ BackgroundComputerUseKit│   SwiftPM dependency, pinned by SHA
+  │  - AX projected tree    │   (see UPSTREAM_SYNC.md)
   │  - ScreenCaptureKit     │
-  │  - CGEvent              │
+  │  - CGEvent / CGWindow   │
+  │  - read-act-read verifier│
   └─────────────────────────┘
 ```
 
@@ -77,8 +97,21 @@ Design spec: [`docs/superpowers/specs/2026-04-22-mcp-computer-use-design.md`](..
   client) and the active PROFILE.
 - **`src/cli/commands/*`** — Commander commands that wrap the same services. CLI
   parity is enforced: every MCP tool has a matching CLI subcommand.
-- **`native/macos/bridge.swift`** — the Swift helper. Owned and extended here;
-  seeded from upstream with attribution.
+- **`native/macos/Package.swift`** — SwiftPM manifest. Declares
+  `BackgroundComputerUseKit` as a dependency, pinned by full commit SHA.
+- **`native/macos/Sources/McpComputerUseHelper/`** — the Swift wrapper.
+  - `main.swift` — NDJSON stdio loop; reads request lines, dispatches to
+    `ProtocolBridge.handle`, writes `{id, ok, result|error}` lines back.
+  - `ProtocolBridge.swift` — command dispatch + DTO translation. Holds the
+    in-memory `windowNumber → windowID` and `windowID → stateToken` caches
+    that bridge our wire-shape's `windowId: UInt32` to upstream's
+    `windowID: String`.
+  - `LocalScroll.swift` — CGEvent-based scroll (lifted from the v0.1
+    helper). Upstream's `scroll(_:)` requires a semantic target, so v0.2
+    keeps a local impl until v0.3.0 surfaces semantic targeting.
+  - `ErrorMapping.swift` — substring heuristics that translate upstream's
+    package-internal error types into our public error codes. Heuristic
+    because upstream's error enums are not `public`.
 
 </architecture>
 
@@ -99,20 +132,27 @@ screen state matches what the agent saw.
   captures the frontmost app.
 - `windowTitle?` — exact window title string. Pairs with `app`.
 
-**Returns**
+**Returns** — two MCP content blocks: a JSON `text` block, and an `image`
+block with the PNG (mime `image/png`). The text block:
+
 ```json
 {
   "capture_id": "cap_8f2a1c9e",
-  "png_base64": "iVBORw0KGgo...",
-  "window_info": {
-    "title": "Calculator",
-    "bundle_id": "com.apple.calculator",
+  "target": {
+    "appName": "Calculator",
+    "bundleId": "com.apple.calculator",
     "pid": 42881,
-    "frame": { "x": 0, "y": 38, "width": 300, "height": 400 }
+    "windowTitle": "Calculator",
+    "windowId": 12345
   },
-  "scale": 2
+  "size": { "width": 600, "height": 800, "scale": 2 }
 }
 ```
+
+Note the mixed casing: `capture_id` is snake_case (carried over from the
+original v0.1 input/output convention for that field) while everything
+else is camelCase. `WindowInfo`-shaped fields (`bundleId`, `windowTitle`,
+`appName`, `windowId`) are camelCase throughout the v0.2 wire shape.
 
 **Examples**
 
@@ -268,18 +308,29 @@ List visible windows across the system, optionally filtered by bundle ID.
 **Parameters**
 - `bundleId?` — filter to a single app.
 
-**Returns** `WindowInfo[]`.
+**Returns** `WindowInfo[]` — each entry has the full set of fields
+emitted by `mapWindowItem` in `src/native/macos-bridge.ts`:
 
 ```json
 [
   {
-    "title": "Calculator",
-    "bundle_id": "com.apple.calculator",
+    "appName": "Calculator",
+    "bundleId": "com.apple.calculator",
     "pid": 42881,
+    "windowId": 12345,
+    "title": "Calculator",
+    "isFrontmost": true,
+    "isMinimized": false,
+    "isOnscreen": true,
     "frame": { "x": 0, "y": 38, "width": 300, "height": 400 }
   }
 ]
 ```
+
+`isFrontmost` is derived from upstream's `isFocused || isMain`. The
+no-filter call mode misattributes `pid`/`bundleId` to the frontmost app
+across all entries (carried over from v0.1; slated for v0.3.0). Pass
+`bundleId` explicitly for correct attribution.
 
 **Examples**
 
@@ -458,23 +509,37 @@ the conversation.
 
 ## Swift command surface
 
-Currently exposed by `native/macos/bridge.swift`:
+Exposed by `ProtocolBridge.handle` in the wrapper. Command names are
+camelCase, matching v0.1 verbatim — wire shape preserved across the
+v0.2.0 swap.
 
-- `checkPermissions` — AX + Screen Recording status.
-- `listApps` — all running applications.
-- `listWindows` — optional `bundleId` or `pid` filter.
-- `getFrontmost` — frontmost app only (not enriched).
-- `screenshot` — capture app / window to PNG.
-- `mouseClick` — `{x, y}` in screenshot pixel space.
-- `typeText` — string into frontmost editable.
-- `keyPress` — `{key, modifiers[]}`.
-- `scroll` — `{direction, amount}`.
-- `shutdown` — clean helper exit.
-- AX helpers (not yet surfaced as MCP tools; v1.1): `axPressAtPoint`,
-  `axDescribeAtPoint`, `axFindTextInput`, `axSetFocus`.
+| Wrapper cmd        | Backed by                                               |
+|--------------------|---------------------------------------------------------|
+| `checkPermissions` | upstream `permissions()` (drilled through `.granted`)   |
+| `listApps`         | upstream `listApps()`, filtered to `activationPolicy == "regular"` |
+| `listWindows`      | upstream `listWindows(.init(app: bundleID))` (per-app iteration when no filter) |
+| `getFrontmost`     | composite: `listApps()` → `frontmostApp` → `listWindows(...)` → window-scoring heuristic |
+| `screenshot`       | upstream `getWindowState(.init(window: windowID, imageMode: .base64))` |
+| `mouseClick`       | upstream `click(.init(window:, x:, y:, stateToken:))` (cached stateToken from prior screenshot) |
+| `typeText`         | upstream `typeText(.init(window: <frontmost>, text:))` |
+| `keyPress`         | upstream `pressKey(.init(window: <frontmost>, key: "cmd+shift+s"))` |
+| `scroll`           | **local-only** — CGEvent via `LocalScroll.swift` (upstream requires semantic target) |
+| `shutdown`         | **local-only** — replies `{ok: true}` then `exit(0)` after 25ms |
 
-Command names are camelCase, matching the Swift helper as authored. Owned here;
-no upstream wire-compat commitment (spec §8 revision 2026-04-22b).
+The wrapper maintains two in-memory caches keyed off responses:
+- `windowNumber → windowID` — populated by every listWindows / getWindowState
+  response; lets clients refer to windows by our compact `windowId: UInt32`.
+- `windowID → stateToken` — populated by getWindowState + every action
+  response (`postStateToken`); lets the next click/typeText/pressKey carry
+  a fresh stateToken without an extra round-trip.
+
+Neither cache is exposed through the wire protocol.
+
+Upstream's higher-quality primitives (semantic targeting, AX projected tree,
+verifier classification, window motion, `set_value`,
+`perform_secondary_action`) are reachable through the kit but **not
+currently surfaced** as MCP tools — v0.3.0 work, tracked in
+[`docs/superpowers/plans/2026-04-29-expose-new-capabilities.md`](../superpowers/plans/2026-04-29-expose-new-capabilities.md).
 
 ## Process lifecycle
 
@@ -545,48 +610,70 @@ mcp-cu-cli scroll down 3
 
 | Symptom | Fix |
 |---|---|
-| `Swift helper not installed at ~/.mcp-computer-use/bridge` | Run `npm run build:native` (or re-run the postinstall). Requires Xcode Command Line Tools: `xcode-select --install`. |
-| `Failed to start mcp-computer-use` / AX errors on first call | System Settings → Privacy & Security → Accessibility **and** Screen Recording → add and enable `~/.mcp-computer-use/bridge`. Both are required. |
+| `Swift helper not installed at ~/.mcp-computer-use/bridge` | Run `npm run build:native` (or re-run the postinstall). Requires full Xcode (not just Xcode CLT): install from the App Store and run `xcode-select -s /Applications/Xcode.app`. |
+| `Failed to start mcp-computer-use` / AX errors on first call | System Settings → Privacy & Security → Accessibility **and** Screen Recording → add and enable `~/.mcp-computer-use/bridge`. Both are required. After a v0.2.0 upgrade, grants usually persist (granted-by-path), but if not, remove and re-add the binary in both panes. |
 | `APP_NOT_ALLOWED: com.some.app` | Add the bundle ID to `MCP_CU_ALLOWED_APPS` (preferred), or `MCP_CU_ALLOW_ALL=1` (discouraged), or `MCP_CU_PROFILE=permissive`. |
 | `SECRET_DETECTED` on a string you know is safe | The text matched one of the regexes (likely the long-base64 catch-all). Set `MCP_CU_SECRET_SCAN=0` for the session, or rewrite the string. |
 | `stale_capture_id` | Take a fresh `screenshot` before the next `click` / `scroll`. Capture IDs age out — the bridge keeps ~20 most recent. |
-| `typeText requires pid in non-intrusive mode` | Shouldn't happen in the current build. If seen, the installed helper is stale — rebuild with `npm run build:native`. |
-| Helper compile fails with `xcrun: error` | Install Xcode Command Line Tools: `xcode-select --install`. Full Xcode is not required. |
+| Helper build fails with `error: unknown command 'build'` from `swift` | The system `swift` is the CLT shim, not the full Xcode toolchain. Install Xcode and run `xcode-select -s /Applications/Xcode.app`. |
+| `swift package update` fails with network/auth errors | Upstream is hosted on GitHub. Verify network access; for private mirrors, set `GIT_TERMINAL_PROMPT=0` and ensure your SSH key is loaded. |
 | Nothing happens, no error | Check `~/.local/state/mcp-computer-use/audit.log` — actions are recorded even when the target app swallows them silently. |
+| `list_windows` shows all windows under one app's pid/bundleId | Pre-existing limitation in v0.2 (carried over from v0.1). Pass `bundleId` explicitly to scope the call. Slated for v0.3.0; see the v0.2.0 release notes. |
 
 </troubleshooting>
 
 <limits>
 
-Known v1 limitations (tracked for v1.1 / v2):
+Known limitations (tracked for v0.3.0 / v1.1 / v2):
 
+- **`list_windows` no-filter pid/bundleId misattribution.** When called
+  without a `bundleId` filter, all returned windows display under the
+  frontmost app's pid/bundleId. Pre-existing in v0.1; carried into v0.2
+  unchanged because the swap preserved wire shape verbatim. Pass
+  `bundleId` explicitly as a workaround. Cheap fix slated for v0.3.0
+  (per-window pid emission in the wrapper).
 - **Multi-instance pid heuristic.** `listWindows(bundleId)` attributes all
-  returned windows to the first pid matching the bundle ID. Apps like Chrome
-  that run multiple top-level processes will surface correct windows but with
-  the wrong pid field.
-- **Sensitive-app redaction is a stub.** The redaction pipeline is wired end to
-  end, but the Swift-side blur is a no-op placeholder. A `redact_screenshot`
-  helper will ship in v1.1 with per-app region maps.
-- **No drag, double-click, right-click, triple-click in v1.** Omitted until
-  actually needed — an agent can usually achieve the same result via AX
-  semantic actions. Add when warranted.
-- **macOS 14+ required.** ScreenCaptureKit is the capture backend.
-- **No per-call flag overrides.** Behaviour is env-driven. An agent cannot
-  escalate privileges mid-session.
+  returned windows to one pid even when an app spawns multiple top-level
+  processes (e.g. Chrome). v0.3.0 will surface upstream's per-window pid.
+- **Sensitive-app redaction is a stub.** The redaction pipeline is wired
+  end to end, but the helper-side blur is a no-op placeholder. A
+  `redact_screenshot` step will ship in v1.1 with per-app region maps.
+- **No drag, double-click, right-click, triple-click in v0.2.** v0.3.0
+  adds drag and `perform_secondary_action` (right-click via AX); double-
+  and triple-click remain unscoped.
+- **macOS 14+ required.** Upstream's `Package.swift` declares
+  `platforms: [.macOS(.v14)]`.
+- **Full Xcode required for postinstall build.** `swift build` ships with
+  Xcode, not with Xcode Command Line Tools alone.
+- **No per-call flag overrides.** Behaviour is env-driven. An agent
+  cannot escalate privileges mid-session.
 
 </limits>
 
 <roadmap>
 
-## v1.1 (post-beta)
+## v0.3.0
 
-- Surface richer AX tools as MCP commands: `axPressAtPoint`, `axFindTextInput`,
-  `axDescribeAtPoint`. The Swift helper already implements them.
-- Proper sensitive-app redaction pipeline (region maps + Gaussian blur Swift-side).
-- `confirm` profile polish — wire a proper user-facing confirmation channel
-  (currently the preset exists but falls back to audit-only).
-- `UPSTREAM_SYNC.md` — only created if we ever pull a targeted fix from
-  upstream. Not created pre-emptively (spec §8 rev 2026-04-22b).
+Surface the upstream capabilities that the v0.2 SwiftPM swap unlocked:
+
+- Semantic targeting (`click_target` by role+label).
+- AX projected tree exposure (`get_window_tree`).
+- Verifier classification on action responses.
+- Window motion (`move_window`, `resize_window`, `drag`).
+- `set_value`, `perform_secondary_action`.
+- Per-window `pid`/`bundleId` fix (eliminates the listWindows
+  no-filter misattribution).
+- Signed `.app` bundle for TCC stability across rebuilds.
+- Tagged-release pinning once upstream cuts tags.
+
+Full plan: [`docs/superpowers/plans/2026-04-29-expose-new-capabilities.md`](../superpowers/plans/2026-04-29-expose-new-capabilities.md).
+
+## v1.1 (deferred — original v0.1 backlog)
+
+- Proper sensitive-app redaction pipeline (region maps + Gaussian blur
+  Swift-side).
+- `confirm` profile polish — wire a proper user-facing confirmation
+  channel (currently the preset exists but falls back to audit-only).
 
 ## v2
 
@@ -597,3 +684,23 @@ Known v1 limitations (tracked for v1.1 / v2):
 - Stealth mode = UIA `InvokePattern`; non-stealth = `SendInput`.
 
 </roadmap>
+
+<upgrading-upstream>
+
+The Swift helper depends on
+[`actuallyepic/background-computer-use`](https://github.com/actuallyepic/background-computer-use)
+pinned by full commit SHA. To bump the pin:
+
+1. Decide the target SHA (browse upstream's commit log or pull a local
+   checkout).
+2. Edit the `revision: "..."` field in `native/macos/Package.swift`.
+3. Run `swift package update --package-path native/macos` to refresh
+   `native/macos/Package.resolved`.
+4. Run `npm run build:native && npm test` to validate.
+5. Update the SHA reference in `NOTICE`.
+6. Commit `Package.swift`, `Package.resolved`, and `NOTICE` together.
+
+Full ritual including troubleshooting and the policy on tagged releases is
+in [`UPSTREAM_SYNC.md`](../../UPSTREAM_SYNC.md).
+
+</upgrading-upstream>

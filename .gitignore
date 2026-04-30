@@ -7,3 +7,7 @@ build/
 coverage/
 .vitest/
 .context/
+
+# SwiftPM build artifacts (Package.resolved is committed as the lockfile;
+# .build/ is per-machine cache + build products and stays out of git).
+native/macos/.build/

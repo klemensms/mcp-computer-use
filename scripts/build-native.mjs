@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = path.join(rootDir, "native", "macos", "bridge.swift");
+const packageDir = path.join(rootDir, "native", "macos");
 
 function getArg(name) {
   const i = process.argv.indexOf(name);
@@ -23,6 +23,12 @@ async function run(cmd, args) {
   });
 }
 
+function archDir() {
+  return process.arch === "arm64"
+    ? "arm64-apple-macosx"
+    : "x86_64-apple-macosx";
+}
+
 async function main() {
   if (process.platform !== "darwin") {
     throw new Error("build-native is only supported on macOS.");
@@ -32,18 +38,11 @@ async function main() {
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-  const swiftArgs = [
-    "swiftc", "-O",
-    "-framework", "ApplicationServices",
-    "-framework", "AppKit",
-    "-framework", "ScreenCaptureKit",
-    "-framework", "Foundation",
-    sourcePath,
-    "-o", outputPath,
-  ];
+  console.error(`[mcp-computer-use] Building native helper via swift build → ${outputPath}`);
+  await run("swift", ["build", "-c", "release", "--package-path", packageDir]);
 
-  console.error(`[mcp-computer-use] Building native helper → ${outputPath}`);
-  await run("xcrun", swiftArgs);
+  const builtBinary = path.join(packageDir, ".build", archDir(), "release", "McpComputerUseHelper");
+  await fs.copyFile(builtBinary, outputPath);
   await fs.chmod(outputPath, 0o755);
   console.error(`[mcp-computer-use] Built helper at ${outputPath}`);
 }
