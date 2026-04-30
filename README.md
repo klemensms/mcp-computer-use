@@ -2,7 +2,10 @@
 
 MCP server giving Claude Code (and any MCP client) **semantic macOS app control** — screenshot, click, type, keypress, scroll — via the Accessibility API and ScreenCaptureKit.
 
-> **Status:** v0.1.0-beta. macOS 14+. Windows backend planned for v2.
+> **Status:** v0.2.0-beta. macOS 14+. Full Xcode required for the
+> postinstall Swift build (Xcode Command Line Tools alone are not
+> sufficient — `swift build` ships with Xcode). Windows backend planned
+> for v2.
 
 ## Why
 
@@ -28,7 +31,13 @@ MCP config:
 }
 ```
 
-First launch compiles the Swift helper from source (requires Xcode Command Line Tools: `xcode-select --install`), then macOS prompts for Accessibility + Screen Recording on `~/.mcp-computer-use/bridge`. Grant both.
+First launch compiles the Swift helper from source via SwiftPM (requires
+full Xcode — install from the App Store; `xcode-select -s /Applications/Xcode.app`
+if it's already there but unselected). The helper imports
+[`BackgroundComputerUseKit`](https://github.com/actuallyepic/background-computer-use)
+and resolves on first build (~10s on a cold cache, ~1s warm). macOS
+then prompts for Accessibility + Screen Recording on
+`~/.mcp-computer-use/bridge` — grant both.
 
 ## Quick example
 
@@ -73,7 +82,18 @@ See `docs/technical/COMPUTER_USE_TECHNICAL.md` for the full safety model. Short 
 
 ## Acknowledgements
 
-The Swift helper at `native/macos/bridge.swift` was seeded from [injaneity/pi-computer-use](https://github.com/injaneity/pi-computer-use) (MIT © Zane Chee, commit `96434a7`). We extended it here — `keyPress`, `scroll`, `shutdown`, `listWindows(bundleId:)` — and don't commit to upstream wire compatibility. Full attribution in `NOTICE`.
+The Swift helper at `native/macos/Sources/McpComputerUseHelper/` is a
+thin wrapper over [`BackgroundComputerUseKit`](https://github.com/actuallyepic/background-computer-use)
+(MIT © cam + anupam, dubdubdub labs), consumed via SwiftPM and pinned by
+commit SHA in `native/macos/Package.swift`. The wrapper translates upstream's
+Swift API into this project's existing JSON-over-stdio wire protocol; the
+TypeScript side and safety model are owned here. See `NOTICE` for full
+attribution and `UPSTREAM_SYNC.md` for the upgrade ritual.
+
+Earlier releases (v0.1.x) shipped a vendored helper seeded from
+[`injaneity/pi-computer-use`](https://github.com/injaneity/pi-computer-use);
+that file was deleted in v0.2.0 — see the v0.2.0 release notes for the
+migration story.
 
 Uses `@mcp-consultant-tools/core` for shared helpers across sibling MCP packages.
 
