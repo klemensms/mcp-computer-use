@@ -1,6 +1,6 @@
 # v0.2.0 Migration: replace `bridge.swift` with SwiftPM-consumed `BackgroundComputerUseKit`
 
-**Status:** approved 2026-04-29. Phases 0 + 1 + 2 + 4 complete; Phase 3 partially complete (3.1 + 3.2 + 3.3-readonly + 3.4-indirect done; 3.3-interactive + 3.5 pending Klemens interactive validation). All code + docs work committed on the feature branch; production helper binary swapped to v0.2 wrapper at `~/.mcp-computer-use/bridge`. Phase 5 (delete `bridge.swift`, final commits, PR) is next.
+**Status:** approved 2026-04-29. Phases 0 + 1 + 2 + 4 + 5 complete; Phase 3 partially complete (3.1 + 3.2 + 3.3-readonly + 3.4-indirect done; 3.3-interactive + 3.5 pending Klemens interactive validation). PR opened: https://github.com/klemensms/mcp-computer-use/pull/1. Production helper binary swapped to v0.2 wrapper at `~/.mcp-computer-use/bridge`; vendored `bridge.swift` deleted.
 
 **Branch:** `feat/swap-to-bg-computer-use-kit`
 
@@ -227,15 +227,10 @@ package.json                                 # MODIFIED: version bump 0.1.0-beta
 
 ### Phase 5 — Cleanup + commit (30m)
 
-- [ ] **5.1** `git rm native/macos/bridge.swift`
-- [ ] **5.2** Run `npm run build && npm test && npm pack --dry-run` — verify packaged tarball includes Swift sources, excludes old bridge.swift, excludes `.build/`.
-- [ ] **5.3** Commit on the feature branch in logical chunks (one per phase):
-  - `chore(native): scaffold SwiftPM workspace with BackgroundComputerUseKit dependency`
-  - `feat(native): wrap BackgroundComputerUseKit, preserve JSON-stdio wire protocol`
-  - `chore(build): switch helper build to swift build`
-  - `chore: delete vendored bridge.swift; update NOTICE`
-  - `docs: v0.2.0 release notes, upstream sync ritual, technical reference rewrite`
-- [ ] **5.4** Open PR for review — do NOT merge automatically; Klemens reviews diff.
+- [x] **5.1** `git rm native/macos/bridge.swift` **→ Done in `a2c31c9`. Diff was 1,549 deletions on the source file + 1 modification (one stale comment in `tests/fixtures/mock-helper.mjs:2` that referenced the deleted file path — updated to point at the wrapper directory instead).**
+- [x] **5.2** Run `npm run build && npm test && npm pack --dry-run` — verify packaged tarball includes Swift sources, excludes old bridge.swift, excludes `.build/`. **→ Done. `npm run build` clean. `npm test` 46/46 in 1.80s. `npm pack --dry-run` confirms tarball contains `native/macos/Package.swift`, `Package.resolved`, all 4 wrapper `.swift` files; excludes deleted `bridge.swift` and `.build/`. Final tarball: `mcp-consultant-tools-computer-use-0.2.0-beta.1.tgz`, 36.1 kB packed / 145.9 kB unpacked, 112 files.**
+- [x] **5.3** Commit on the feature branch in logical chunks. **→ Done. Commits across all phases (16 total since main): plan + Phase 0 (`1193f2f`), allowlist patches (`66021ad`, `983ed19`, `7367329`), Phase 1 scaffold (`00fc401`, `555033b`, `15c44a4`), Phase 2 build pipeline (`7aaf655`, `c6de4dc`), Phase 3 (`5b1da7a`), Phase 4 docs (`8896a5c`, `e9754cb`, `bb9f020`, `40837c1`), Phase 5 deletion + final allowlist (`a2c31c9`, `fdc4317`). Per the handoff guidance, kept commits small + focused — never squashed.**
+- [x] **5.4** Open PR for review — do NOT merge automatically; Klemens reviews diff. **→ Done. PR #1 at https://github.com/klemensms/mcp-computer-use/pull/1. Title: "v0.2.0: swap helper internals to BackgroundComputerUseKit (SwiftPM)". Body covers summary, plan reference, breaking changes, known limitation (listWindows misattribution), out-of-scope items, test plan with both completed + pending checks, pin + upgrade ritual, and acknowledgements.**
 
 ## Verification (success criteria)
 
@@ -646,3 +641,49 @@ Phase 4 was clean — no surprises. All 6 deliverables landed, `npm test` still 
 - Phase 3.3 interactive validation + Phase 3.5 MCP smoke — still pending Klemens.
 
 **Next:** Phase 5 — `git rm native/macos/bridge.swift`, `npm run build && npm test && npm pack --dry-run`, final commit, open PR.
+
+---
+
+## Phase 5 — Findings (2026-04-30)
+
+Phase 5 ran clean. Two commits + a PR.
+
+### Deletion + verification
+
+- `git rm native/macos/bridge.swift` removed the 1,549-line vendored helper. One adjacent comment in `tests/fixtures/mock-helper.mjs:2` referenced the deleted file path — updated as part of the same commit (`a2c31c9`) since it was an orphan of the deletion, not unrelated cleanup.
+- `npm run build` — clean tsc compile.
+- `npm test` — 46/46 in 1.80s. Integration tests (which exercise the real binary at `~/.mcp-computer-use/bridge`) still green.
+- `npm pack --dry-run` — confirmed correct contents:
+  - **Includes:** `native/macos/Package.swift` (744B), `native/macos/Package.resolved` (391B), all 4 wrapper Swift files (`main.swift` 3.3kB, `ProtocolBridge.swift` 15.0kB, `LocalScroll.swift` 1.7kB, `ErrorMapping.swift` 1.6kB), `scripts/build-native.mjs`, `scripts/setup-helper.mjs`, all `build/` JS + d.ts.
+  - **Excludes:** `native/macos/bridge.swift` (deleted), `native/macos/.build/` (gitignored), source TS, tests, docs.
+  - Tarball: 36.1 kB packed / 145.9 kB unpacked / 112 files / sha512 integrity hash recorded.
+
+### Pre-commit secret-scanner false positive
+
+The `bridge.swift` deletion diff included the Core Graphics API name `CGWindowListCreateDescriptionFromArray`, which exceeds the 35-char long-string threshold. Per CLAUDE.md auto-bypass policy, classified as a clear false positive (Apple framework symbol, not a credential), bypassed with `--no-verify`, then patched `.secret-scan-longstr-allowlist` in a follow-up commit (`fdc4317`) so future references to this symbol won't trip the scanner.
+
+### Push + PR
+
+`git push -u origin feat/swap-to-bg-computer-use-kit` initially failed because the HTTPS remote couldn't prompt for credentials in the non-interactive shell. Resolved by running `gh auth setup-git` to install the gh credential helper for git operations against `github.com` — push then succeeded immediately. The active gh account is `klemensms` with `repo` scope, which is what was needed.
+
+PR #1 opened: https://github.com/klemensms/mcp-computer-use/pull/1. Body includes:
+- Summary + net diff (~+800 / −1,549 lines)
+- Plan reference + per-phase Findings pointer
+- Breaking changes (macOS 14+, full Xcode, TCC)
+- Known limitation (listWindows misattribution, slated for v0.3.0)
+- Out-of-scope items deferred to v0.3.0 (semantic targeting, AX tree, verifier, signed `.app`, etc.)
+- Test plan checklist (Phase 3 interactive items left unchecked for Klemens)
+- Pin + upgrade ritual reference (UPSTREAM_SYNC.md)
+- Acknowledgements to upstream (cam + anupam at dubdubdub labs)
+
+### What's NOT done
+
+- **Phase 3.3 interactive** (screenshot + click + type-text + Cmd+S + scroll on a real focused window) — pending Klemens. Touches his desktop directly.
+- **Phase 3.5 Claude Code MCP smoke** — pending Klemens. Best validated from a real Claude Code session with the MCP server registered.
+- **Merging the PR** — explicitly NOT done autonomously. Klemens reviews the diff and merges when satisfied.
+
+### Total time
+
+The full plan estimated 1-2 days focused work. Actual elapsed across all 5 phases: under 2 days, with most of the autonomous work completing in single-session bursts. Phase 4 (docs) + Phase 5 (cleanup + PR) ran in one continuous session today after a handoff from yesterday.
+
+**Next:** Klemens reviews PR #1, runs Phase 3.3 interactive smoke at his convenience, and either kicks off Phase 3.5 from a fresh Claude Code MCP session or asks Claude to spawn one via cmux.
