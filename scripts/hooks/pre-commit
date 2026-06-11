@@ -63,19 +63,46 @@ if echo "$STAGED_FILES" | grep -q ".claude/settings.json"; then
 fi
 
 # Check for .env files (hard block - never allow)
-if echo "$STAGED_FILES" | grep -qE "\.env($|\.)" ; then
+# Allow template/example files (.env.example, .env.template, .env.sample, .env.dist).
+ENV_FILES=$(echo "$STAGED_FILES" | grep -E "\.env($|\.)" | grep -vE "\.env\.(example|template|sample|dist)$" || true)
+if [ -n "$ENV_FILES" ]; then
     echo "❌ ERROR: .env file is staged for commit!"
     echo "   Environment files should NEVER be committed."
+    echo "   Offending files:"
+    echo "$ENV_FILES" | sed 's/^/     /'
     exit 1
 fi
 
 # Check for long strings that look like credentials (excluding allowlisted patterns and excluded files)
-LONG_STRINGS=$(git diff --cached -- . ":(exclude).secret-scan-allowlist" ":(exclude).secret-scan-longstr-allowlist" | grep -oE '[a-zA-Z0-9+/~]{35,}' | grep -v "^-" | filter_allowlist "$LONGSTR_ALLOWLIST" || true)
+# package-lock.json is excluded — it contains sha512 integrity hashes by design
+# (npm-managed, not a credential vector).
+LONG_STRINGS=$(git diff --cached -- . ":(exclude).secret-scan-allowlist" ":(exclude).secret-scan-longstr-allowlist" ":(exclude)package-lock.json" ":(exclude)**/package-lock.json" | grep -oE '[a-zA-Z0-9+/~]{35,}' | grep -v "^-" | filter_allowlist "$LONGSTR_ALLOWLIST" || true)
 if [ -n "$LONG_STRINGS" ]; then
     echo "⚠️  WARNING: Long strings detected (possible credentials):"
     echo "$LONG_STRINGS" | head -5
     echo ""
     FOUND_SECRETS=1
+fi
+
+# ─── Internal-identifier scan (client/internal info, not secrets) ──────────
+# Unlike the secret scan above, denylist hits are NEVER false positives and
+# must NOT be bypassed with --no-verify. See CLAUDE.md → "Public Repo Hygiene".
+if [ -f "$REPO_ROOT/scripts/internal-scan-lib.sh" ]; then
+    # shellcheck source=../internal-scan-lib.sh
+    source "$REPO_ROOT/scripts/internal-scan-lib.sh"
+    ADDED_LINES=$(git diff --cached -- . ":(exclude).secret-scan-allowlist" ":(exclude).secret-scan-longstr-allowlist" ":(exclude).internal-scan-placeholders" ":(exclude)package-lock.json" ":(exclude)**/package-lock.json" | grep '^+' | grep -v '^+++' || true)
+    if [ -n "$ADDED_LINES" ]; then
+        if ! printf '%s\n' "$ADDED_LINES" | internal_scan "staged changes"; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🛑 BLOCKED: internal/client identifier in staged changes."
+            echo "   This is a PUBLIC repo. Do NOT bypass with --no-verify."
+            echo "   Replace the value with a sanctioned placeholder"
+            echo "   (CLAUDE.md → Public Repo Hygiene), then re-stage."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+        fi
+    fi
 fi
 
 if [ $FOUND_SECRETS -eq 1 ]; then

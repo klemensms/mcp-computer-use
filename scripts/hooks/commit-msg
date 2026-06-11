@@ -1,0 +1,43 @@
+#!/bin/bash
+# commit-msg hook — scan the commit MESSAGE for internal identifiers and credential-like
+# strings. Messages leak too, and a message leak is the worst kind: only a history
+# rewrite removes it. Install: ./scripts/install-hooks.sh
+#
+# Note: the secret KEYWORD scan is deliberately not applied to messages ("fix password
+# reset flow" is a normal message). Messages get: internal denylist + endpoint
+# heuristics + long-string check.
+
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+LONGSTR_ALLOWLIST="$REPO_ROOT/.secret-scan-longstr-allowlist"
+
+# Strip comment lines (rebase/merge templates)
+MSG=$(grep -v '^#' "$1" || true)
+[ -z "$MSG" ] && exit 0
+
+if [ -f "$REPO_ROOT/scripts/internal-scan-lib.sh" ]; then
+    # shellcheck source=../internal-scan-lib.sh
+    source "$REPO_ROOT/scripts/internal-scan-lib.sh"
+    if ! printf '%s\n' "$MSG" | internal_scan "commit message"; then
+        echo ""
+        echo "🛑 BLOCKED: the commit MESSAGE contains internal/client identifiers."
+        echo "   Messages are forever (only a history rewrite removes them) — reword it."
+        echo "   Say \"a client project\", not the project name. Do NOT bypass."
+        exit 1
+    fi
+fi
+
+# Long credential-like strings in the message
+LONG_STRINGS=$(printf '%s\n' "$MSG" | grep -oE '[a-zA-Z0-9+/~]{35,}' || true)
+if [ -n "$LONG_STRINGS" ] && [ -f "$LONGSTR_ALLOWLIST" ]; then
+    LONG_STRINGS=$(printf '%s\n' "$LONG_STRINGS" | grep -vEf <(grep -v '^#' "$LONGSTR_ALLOWLIST" | grep -v '^$') 2>/dev/null || true)
+fi
+if [ -n "$LONG_STRINGS" ]; then
+    echo "🛑 BLOCKED: long credential-like string in the commit message:"
+    printf '%s\n' "$LONG_STRINGS" | head -3 | sed 's/^/     /'
+    echo "   If this is a hash/identifier false positive, add it to .secret-scan-longstr-allowlist."
+    exit 1
+fi
+
+exit 0

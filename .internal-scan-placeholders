@@ -1,0 +1,23 @@
+# Sanctioned placeholder patterns for the internal-endpoint heuristic scan.
+# Each line is an extended regex, matched case-insensitively against the EXTRACTED
+# endpoint (host or dev.azure.com/org, one per line — so ^ anchors to the endpoint start).
+# An endpoint matching any pattern is ALLOWED. Keep patterns tight — a broad token
+# (e.g. unanchored "org") would allow real hostnames through.
+# See CLAUDE.md → "Public Repo Hygiene". SOURCE OF TRUTH: mcp-consultant-tools — mirrored to siblings.
+mcptests
+your
+acme
+contoso
+example
+fabrikam
+myorg
+my-org
+sample
+placeholder
+\{
+^org\.
+^tenant\.
+^client\.crm\.
+^prod-namespace\.
+^dev\.azure\.com/(org|foo|mycompany|_)
+^scm\.azurewebsites\.net
