@@ -48,6 +48,19 @@ if [ -n "$BAD_FILES" ]; then
     FOUND=1
 fi
 
+# Declaration-files gate: a package whose package.json declares "types" must ship
+# .d.ts files. Guards against stale incremental builds silently skipping declaration
+# emit (a stale tsconfig.tsbuildinfo shipped powerplatform@33.0.0 typeless).
+# Skipped for packages without a "types" field (e.g. compile-from-source siblings).
+if grep -q '"types"[[:space:]]*:' "$TMP/package/package.json" 2>/dev/null; then
+    DTS_COUNT=$(find "$TMP/package" -name '*.d.ts' 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$DTS_COUNT" -eq 0 ]; then
+        echo "🛑 Zero .d.ts files in the tarball but package.json declares \"types\"."
+        echo "   Likely a stale incremental build — run a CLEAN build (npm run build:release) and re-scan."
+        FOUND=1
+    fi
+fi
+
 # Internal identifiers + endpoint heuristics over everything that would ship
 if ! internal_scan_dir "$TMP/package" "tarball of $PKG"; then
     FOUND=1
